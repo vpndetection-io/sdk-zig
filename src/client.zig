@@ -82,6 +82,10 @@ pub const Client = struct {
     /// `io` is the same `std.Io` implementation the rest of your program uses;
     /// `std.Io.Threaded` is the usual one, and a batch is only as concurrent as
     /// the implementation you pass here allows.
+    ///
+    /// `gpa` must be thread-safe if `lookupBatch` is ever called on an `io` that
+    /// runs tasks in parallel, since the workers allocate their own answers.
+    /// The general purpose allocators in `std.heap` are.
     pub fn init(gpa: Allocator, io: Io, options: Options) InitError!Client {
         std.debug.assert(options.concurrency > 0);
 
