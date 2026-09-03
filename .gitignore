@@ -1,0 +1,5 @@
+# Build output. scripts/zig.sh keeps both caches in a docker volume instead, so
+# neither should ever appear here at all.
+.zig-cache/
+zig-cache/
+zig-out/

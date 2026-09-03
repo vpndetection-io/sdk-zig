@@ -1,0 +1,16 @@
+.{
+    .name = .vpndetection,
+    .version = "1.0.0",
+    .fingerprint = 0x6d926123e0cf9ef6, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "example",
+        "test",
+        "testdata",
+        "LICENSE",
+        "README.md",
+    },
+}

@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      # The Dockerfile holds the one pin, so CI cannot drift from the toolchain
+      # the library is developed against.
+      - id: toolchain
+        run: echo "zig=$(awk -F= '/^ARG ZIG_VERSION=/ { print $2 }' scripts/Dockerfile)" >> "$GITHUB_OUTPUT"
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ steps.toolchain.outputs.zig }}
+      - run: zig fmt --check build.zig src test example
+      - run: zig build test
+      - run: zig build example
+      # Nothing generates the response model, so this is what catches a spec
+      # that moved.
+      - run: ./scripts/check-spec.sh
