@@ -1,0 +1,21 @@
+// A package of its own, depending on the library by TAGGED URL rather than by
+// path: the point of this suite is the artifact a stranger fetches, and a
+// `.path` dependency pointing at the parent directory would quietly defeat all
+// of it. scripts/run.sh refuses a run whose dependency is not a url+hash.
+//
+// The dependency is deliberately ABSENT from the committed file. Zig has no
+// central registry, so a release IS a git tag, and a url dependency needs the
+// hash of a tag that exists; `zig fetch --save` writes both for the run and the
+// script puts this file back afterwards.
+.{
+    .name = .vpndetection_integration,
+    .version = "0.0.0",
+    .fingerprint = 0x35d3a1b2ad2ced1f, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{},
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

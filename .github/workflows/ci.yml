@@ -17,7 +17,7 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ steps.toolchain.outputs.zig }}
-      - run: zig fmt --check build.zig src test example
+      - run: zig fmt --check build.zig src test example integration/build.zig integration/src
       - run: zig build test
       - run: zig build example
       # Nothing generates the response model, so this is what catches a spec
