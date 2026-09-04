@@ -57,20 +57,6 @@ defer client.deinit();
 
 Everything the client hands back is allocated with the allocator you gave `init`, and is yours to free. A `Lookup` and a `Batch` each carry a `deinit`, the database calls return a `std.json.Parsed` that owns its arena, and `downloadUrl` returns a slice. The test suite runs under `std.testing.allocator`, so a leak fails the build.
 
-### Absent is not false
-
-Every field beyond `ip` and `is_vpn` is optional, because your plan decides which of them the API sends. `null` means "not in your plan", which is a different answer from `false`:
-
-```zig
-if (result.value.is_hosting) |flagged| {
-    // your plan includes hosting, and this is its answer
-} else {
-    // not in your plan; nothing was checked
-}
-
-const hosting = result.value.is_hosting orelse false; // when you only want the flag
-```
-
 ### With an API key
 
 An API key raises your quota, and raises your features on a paid plan. Create one in the [console](https://app.vpndetection.io), then pass it in:
@@ -197,6 +183,15 @@ defer gpa.free(url);
 ```
 
 `downloadUrl` returns a time-limited link rather than the bytes, so you choose how to transfer a file that can run to gigabytes. The client never follows that redirect for you.
+
+### Absent is not false
+
+Every field beyond `ip` and `is_vpn` is optional, because your plan decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
+
+```zig
+const hosting = result.value.is_hosting orelse false; // when you only want the flag
+if (result.value.is_hosting == null) { ... }          // not in your plan
+```
 
 ## Other Libraries
 
