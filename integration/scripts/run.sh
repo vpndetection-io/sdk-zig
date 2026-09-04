@@ -109,7 +109,13 @@ function assertFromATag() {
             "against a checkout rather than against the release" >&2
         exit 1
     fi
-    if ! grep -qF "git+${REPO_URL}#v${want}" build.zig.zon ; then
+    # `zig fetch --save' does not store the url it was handed: it rewrites it to
+    # `?ref=<tag>#<commit>', recording both the tag asked for and the commit that
+    # tag resolved to. Matching the `#v<tag>' form that went IN therefore never
+    # matches, and because no tag existed while this was written, the gate was
+    # only ever seen taking its skip path. A gate seen only skipping is not a
+    # gate; the published path has to be exercised before the first release.
+    if ! grep -qF "git+${REPO_URL}?ref=v${want}#" build.zig.zon ; then
         echo "FAILED: build.zig.zon does not name ${REPO_URL} at v${want}" >&2
         exit 1
     fi

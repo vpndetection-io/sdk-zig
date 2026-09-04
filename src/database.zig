@@ -370,6 +370,10 @@ pub const DatasetMetadata = struct {
     schema: std.json.ArrayHashMap([]const DatasetMetadataColumn) = .{},
     sample: std.json.ArrayHashMap([]const std.json.Value) = .{},
     size: std.json.ArrayHashMap(i64) = .{},
+    /// How many rows the sample holds, and what it weighs per format. Keyed the
+    /// same way `size` is, because a sample is published per format too.
+    sample_entries: ?i64 = null,
+    sample_size: std.json.ArrayHashMap(i64) = .{},
 };
 
 /// Which digests are present varies by dataset.
