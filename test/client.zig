@@ -137,12 +137,12 @@ test "the API key reaches the wire as a bearer token" {
     var keyed = try harness.client(.{ .api_key = "sk-test-1234" });
     defer keyed.deinit();
     (try keyed.lookup("1.1.1.1")).deinit();
-    try std.testing.expectEqualStrings("Bearer sk-test-1234", harness.stub.lastAuthorization());
+    try std.testing.expectEqualStrings("Bearer sk-test-1234", harness.stub.authorizationFor("/1.1.1.1").?);
 
     var keyless = try harness.client(.{});
     defer keyless.deinit();
     (try keyless.lookup("1.1.1.1")).deinit();
-    try std.testing.expectEqualStrings("", harness.stub.lastAuthorization());
+    try std.testing.expectEqualStrings("", harness.stub.seen()[1].authorization);
 
     // std.http.Client sends its own user agent unless the header is overridden,
     // and the version in ours comes from the manifest through build options.
@@ -267,14 +267,19 @@ test "checksums returns the whole digest set from under its key" {
     try std.testing.expectEqualStrings("s512", digests.value.sha512.?);
 }
 
-test "the database list unwraps one level down" {
+// A license is held against a FAMILY, and the downloadable ids hang off its
+// versions. The spec used to claim `{id, formats}` here while the service
+// answered a family, so `list` handed back structs whose every field was empty
+// and `list` into `download` was broken in every SDK.
+test "the database list unwraps a family and its versions" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
     defer harness.deinit();
     try harness.stub.route("/api/v1/database/list", .ok(
-        \\{"datasets":[{"id":"vpn_ip_extended_v1","name":"VPN IP Extended",
-        \\ "redistribution":"internal","in_term":true,
-        \\ "formats":[{"format":"mmdb","bytes":1234}]}]}
+        \\{"datasets":[{"base":"vpn_ip_extended","name":"VPN IP Extended",
+        \\ "redistribution":"internal","in_term":true,"standing":"licensed",
+        \\ "versions":[{"id":"vpn_ip_extended_v1","version":1,
+        \\   "formats":[{"format":"mmdb","bytes":1234}],"sampleFormats":["csvgz"]}]}]}
     ));
 
     var client = try harness.client(.{ .api_key = "key" });
@@ -283,9 +288,15 @@ test "the database list unwraps one level down" {
     defer datasets.deinit();
 
     try std.testing.expectEqual(1, datasets.value.len);
-    try std.testing.expectEqualStrings("vpn_ip_extended_v1", datasets.value[0].id);
-    try std.testing.expectEqualStrings("mmdb", datasets.value[0].formats[0].format);
-    try std.testing.expectEqual(1234, datasets.value[0].formats[0].bytes.?);
+    const family = datasets.value[0];
+    try std.testing.expectEqualStrings("vpn_ip_extended", family.base);
+    try std.testing.expectEqualStrings("licensed", family.standing);
+    try std.testing.expectEqual(1, family.versions.len);
+    try std.testing.expectEqualStrings("vpn_ip_extended_v1", family.versions[0].id);
+    try std.testing.expectEqual(1, family.versions[0].version);
+    try std.testing.expectEqualStrings("mmdb", family.versions[0].formats[0].format);
+    try std.testing.expectEqual(1234, family.versions[0].formats[0].bytes.?);
+    try std.testing.expectEqualStrings("csvgz", family.versions[0].sampleFormats.?[0]);
 }
 
 // A 404 from a bad dataset id is a CLIENT error. Letting it fall through to the
@@ -349,4 +360,150 @@ test "a batch keeps its own copy of the addresses it was given" {
 
     try std.testing.expectEqualStrings("1.1.1.1", batch.keys()[0]);
     try std.testing.expect(batch.get("1.1.1.1") != null);
+}
+
+/// A stub dataset: gzip's magic so a test can tell real bytes from a truncated
+/// or re-encoded copy, and enough of them that a single-chunk transfer is not
+/// what makes the test pass.
+fn payload(harness: *Harness) ![]const u8 {
+    const bytes = try harness.stub.arena.allocator().alloc(u8, 40_000);
+    bytes[0] = 0x1f;
+    bytes[1] = 0x8b;
+    for (bytes[2..], 2..) |*byte, i| {
+        byte.* = @truncate(i *% 31);
+    }
+    return bytes;
+}
+
+const storage_path = "/storage/cdn_ip_v1.csv.gz";
+
+/// Points the download endpoint at the stub's own storage route, so the whole
+/// two-request dance happens against one origin that records both.
+///
+/// The header slice comes from the stub's arena rather than from a literal: a
+/// `&.{...}` here would die with this function while the stub still holds it.
+fn routeDownload(harness: *Harness, file: support.Route) !void {
+    const arena = harness.stub.arena.allocator();
+    var url_buffer: [64]u8 = undefined;
+    const location = try harness.stub.printed("{s}" ++ storage_path, .{harness.stub.baseUrl(&url_buffer)});
+    const headers = try arena.dupe(Route.Header, &.{.{ .name = "Location", .value = location }});
+    try harness.stub.route("/api/v1/database/download", .{ .status = 302, .headers = headers });
+    try harness.stub.route(storage_path, file);
+}
+
+test "download streams a dataset to disk and sends no key to object storage" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    const body = try payload(harness);
+    try routeDownload(harness, .ok(body));
+
+    var scratch = support.Scratch.start();
+    defer scratch.deinit();
+
+    var client = try harness.client(.{ .api_key = "sk-test-1234" });
+    defer client.deinit();
+    const written = try client.database().download("cdn_ip_v1", .csvgz, scratch.path("data.csv.gz"), .{});
+
+    try std.testing.expectEqual(body.len, written);
+    var read_buffer: [64_000]u8 = undefined;
+    try std.testing.expectEqualSlices(u8, body, try scratch.read("data.csv.gz", &read_buffer));
+    try std.testing.expect(!scratch.exists("data.csv.gz.part"));
+
+    // The presigned link authorizes itself. Handing object storage the API key
+    // as well would give a third party a credential it can spend.
+    try std.testing.expectEqualStrings(
+        "Bearer sk-test-1234",
+        harness.stub.authorizationFor("/api/v1/database/download").?,
+    );
+    try std.testing.expectEqualStrings("", harness.stub.authorizationFor(storage_path).?);
+}
+
+test "downloadBytes agrees with the streamed copy byte for byte" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    const body = try payload(harness);
+    try routeDownload(harness, .ok(body));
+
+    var scratch = support.Scratch.start();
+    defer scratch.deinit();
+
+    var client = try harness.client(.{ .api_key = "key" });
+    defer client.deinit();
+    const written = try client.database().download("cdn_ip_v1", .csvgz, scratch.path("data.csv.gz"), .{});
+
+    const bytes = try client.database().downloadBytes("cdn_ip_v1", .csvgz, .{});
+    defer gpa.free(bytes);
+
+    try std.testing.expectEqual(written, bytes.len);
+    var read_buffer: [64_000]u8 = undefined;
+    try std.testing.expectEqualSlices(u8, try scratch.read("data.csv.gz", &read_buffer), bytes);
+}
+
+// Silence here is how a truncated dataset gets renamed into place and read for
+// weeks as a complete one.
+test "a transfer that stops short fails and leaves nothing behind" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    // Announces 40,000 bytes, writes 16, then closes.
+    try routeDownload(harness, .{ .body = "0123456789abcdef", .promised_length = 40_000 });
+
+    var scratch = support.Scratch.start();
+    defer scratch.deinit();
+
+    var client = try harness.client(.{ .api_key = "key", .retries = 0 });
+    defer client.deinit();
+    var diagnostics: vpndetection.Diagnostics = .{};
+    try std.testing.expectError(error.Network, client.database().download(
+        "cdn_ip_v1",
+        .csvgz,
+        scratch.path("data.csv.gz"),
+        .{ .diagnostics = &diagnostics },
+    ));
+
+    try std.testing.expect(!scratch.exists("data.csv.gz"));
+    try std.testing.expect(!scratch.exists("data.csv.gz.part"));
+    try std.testing.expect(diagnostics.message().len > 0);
+
+    // The in-memory variant reads the same body through the same check.
+    try std.testing.expectError(
+        error.Network,
+        client.database().downloadBytes("cdn_ip_v1", .csvgz, .{}),
+    );
+}
+
+// A licence refusal is the API saying no, not a wobble: retrying it spends
+// quota to be told the same thing again.
+test "a dataset the organization does not license is refused once" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v1/database/download", .{
+        .status = 403,
+        .body = "{\"rc\":\"NOT_LICENSED\"}",
+    });
+
+    var scratch = support.Scratch.start();
+    defer scratch.deinit();
+
+    var client = try harness.client(.{ .api_key = "key", .retries = 3 });
+    defer client.deinit();
+    var diagnostics: vpndetection.Diagnostics = .{};
+    try std.testing.expectError(error.Forbidden, client.database().download(
+        "hosting_ip_v1",
+        .csvgz,
+        scratch.path("data.csv.gz"),
+        .{ .diagnostics = &diagnostics },
+    ));
+
+    try std.testing.expect(!vpndetection.isRetryable(error.Forbidden));
+    try std.testing.expectEqual(1, harness.stub.callCount());
+    try std.testing.expectEqual(@as(?u16, 403), diagnostics.status);
+    // The API says WHICH refusal this is. Falling back to the status would mean
+    // the envelope went unread.
+    try std.testing.expectEqualStrings("NOT_LICENSED", diagnostics.message());
+    // Nothing may be created for a download that never started.
+    try std.testing.expect(!scratch.exists("data.csv.gz.part"));
 }

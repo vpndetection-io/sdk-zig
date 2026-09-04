@@ -150,15 +150,46 @@ pub const Transport = struct {
     }
 
     fn open(self: *Transport, url: []const u8, diag: *Diagnostics) CallError!std.http.Client.Request {
+        const authorization: std.http.Client.Request.Headers.Value =
+            if (self.authorization) |value| .{ .override = value } else .omit;
+        return self.openWith(url, authorization, .default, diag);
+    }
+
+    /// Which content encodings the answer may arrive in. A dataset transfer
+    /// pins `identity` so the bytes on the wire ARE the published file; the
+    /// JSON endpoints take whatever compresses best.
+    pub const Encodings = enum { default, identity_only };
+
+    fn openWith(
+        self: *Transport,
+        url: []const u8,
+        authorization: std.http.Client.Request.Headers.Value,
+        encodings: Encodings,
+        diag: *Diagnostics,
+    ) CallError!std.http.Client.Request {
         const uri = std.Uri.parse(url) catch |err| return fail(diag, err);
         var request = self.http.request(.GET, uri, .{
             .redirect_behavior = .unhandled,
             .headers = .{
-                .authorization = if (self.authorization) |value| .{ .override = value } else .omit,
+                .authorization = authorization,
                 .user_agent = .{ .override = user_agent },
+                // Asked for by name, because the header std would generate from
+                // the field below lists everything BUT identity and so emits a
+                // malformed one when identity is all that is left.
+                .accept_encoding = switch (encodings) {
+                    .default => .default,
+                    .identity_only => .{ .override = "identity" },
+                },
             },
         }) catch |err| return fail(diag, err);
         errdefer request.deinit();
+        // Not decoration: `receiveHead` refuses a content encoding that is not
+        // set here, so an origin that compresses anyway is caught rather than
+        // writing bytes that do not match the digest the API publishes.
+        if (encodings == .identity_only) {
+            request.accept_encoding = @splat(false);
+            request.accept_encoding[@intFromEnum(std.http.ContentEncoding.identity)] = true;
+        }
         request.sendBodiless() catch |err| return fail(diag, err);
         return request;
     }
@@ -188,6 +219,92 @@ pub const Transport = struct {
     fn fail(diag: *Diagnostics, err: anyerror) errors.Error {
         diag.setMessage(@errorName(err));
         return error.Network;
+    }
+};
+
+/// A dataset file arriving from object storage, and everything the origin said
+/// about it.
+///
+/// Held by the caller and NEVER copied after `begin`: `std.http.Client.Response`
+/// points back at the `Request` beside it, so a copy leaves that pointer aimed
+/// at the original.
+///
+/// This is the one request the library makes that carries **no Authorization
+/// header**. The link the download endpoint answers with is presigned: it
+/// authorizes itself through its query string, and object storage is a third
+/// party with no business seeing an API key.
+pub const Transfer = struct {
+    request: std.http.Client.Request = undefined,
+    response: std.http.Client.Response = undefined,
+    /// `Content-Length`, when the origin declared one. Null on a chunked body,
+    /// which is the only shape where a transfer cannot be length-checked.
+    declared: ?u64 = null,
+    body_buffer: [body_buffer_len]u8 = undefined,
+
+    /// Big enough that a gigabyte moves in reasonable chunks, small enough to
+    /// sit in a caller's frame.
+    pub const body_buffer_len = 16 * 1024;
+
+    /// Opens `url` and reads its head, leaving the body ready for `reader`.
+    /// The caller must `deinit` whether or not this succeeds past the open.
+    pub fn begin(
+        self: *Transfer,
+        transport: *Transport,
+        gpa: Allocator,
+        url: []const u8,
+        diag: *Diagnostics,
+    ) CallError!void {
+        self.* = .{};
+        self.request = try transport.openWith(url, .omit, .identity_only, diag);
+        errdefer self.request.deinit();
+
+        self.response = self.request.receiveHead(&.{}) catch |err| return Transport.fail(diag, err);
+        const status = @intFromEnum(self.response.head.status);
+        diag.status = status;
+        const retry_after = readRetryAfter(self.response.head);
+        diag.retry_after_s = retry_after.seconds;
+        if (status < 200 or status >= 300) {
+            const body = try readBody(&self.response, gpa, diag);
+            defer gpa.free(body);
+            if (errors.envelopeMessage(gpa, body)) |message| {
+                defer gpa.free(message);
+                diag.setMessage(message);
+            }
+            return errors.classify(status, retry_after.present);
+        }
+        self.declared = self.response.head.content_length;
+    }
+
+    pub fn deinit(self: *Transfer) void {
+        self.request.deinit();
+        self.* = undefined;
+    }
+
+    /// The file's bytes. Not decompressed: see `identity_only`.
+    pub fn reader(self: *Transfer) *Io.Reader {
+        return self.response.reader(&self.body_buffer);
+    }
+
+    /// A transfer that stopped short is a FAILURE, not a short file. Silence
+    /// here is how a truncated dataset gets written to disk, renamed into place
+    /// and read for weeks as a complete one.
+    pub fn verify(self: *Transfer, received: u64, diag: *Diagnostics) errors.Error!void {
+        const declared = self.declared orelse return;
+        if (received == declared) {
+            return;
+        }
+        var buffer: [Diagnostics.max_message_len]u8 = undefined;
+        diag.setMessage(std.fmt.bufPrint(
+            &buffer,
+            "the transfer stopped at {d} of {d} bytes",
+            .{ received, declared },
+        ) catch "the transfer stopped short of the declared length");
+        return error.Network;
+    }
+
+    /// Turns a body read that gave up into the retryable failure it is.
+    pub fn readFailure(self: *Transfer, diag: *Diagnostics) errors.Error {
+        return Transport.fail(diag, self.response.bodyErr() orelse error.ReadFailed);
     }
 };
 

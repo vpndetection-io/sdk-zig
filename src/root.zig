@@ -30,9 +30,10 @@
 //!
 //! Everything the client returns is allocated with the allocator you gave
 //! `Client.init` and is owned by you: a `Lookup` and a `Batch` carry a `deinit`,
-//! a `std.json.Parsed` from the database API carries its arena, and
-//! `downloadUrl` returns a slice to free. The library allocates nothing you
-//! cannot free, and its test suite runs under `std.testing.allocator`.
+//! a `std.json.Parsed` from the database catalog carries its arena, and
+//! `downloadUrl` and `downloadBytes` return slices to free. The library
+//! allocates nothing you cannot free, and its test suite runs under
+//! `std.testing.allocator`.
 
 const std = @import("std");
 
@@ -56,8 +57,10 @@ pub const DatasetFormatSize = @import("database.zig").DatasetFormatSize;
 pub const DatasetMetadata = @import("database.zig").DatasetMetadata;
 pub const DatasetMetadataColumn = @import("database.zig").DatasetMetadataColumn;
 pub const Download = @import("database.zig").Download;
+pub const DownloadError = @import("database.zig").DownloadError;
 pub const Format = @import("database.zig").Format;
 pub const LicensedDataset = @import("database.zig").LicensedDataset;
+pub const LicensedVersion = @import("database.zig").LicensedVersion;
 
 pub const CallError = @import("errors.zig").CallError;
 pub const Diagnostics = @import("errors.zig").Diagnostics;

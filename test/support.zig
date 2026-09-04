@@ -34,6 +34,13 @@ pub const Route = struct {
     }
 };
 
+/// One request the stub answered, as much of it as a test is allowed to keep.
+pub const Call = struct {
+    path: []const u8,
+    /// Empty when the request carried no `Authorization` header at all.
+    authorization: []const u8,
+};
+
 pub const Stub = struct {
     gpa: Allocator,
     io: Io,
@@ -46,9 +53,7 @@ pub const Stub = struct {
     connections: Io.Group = .init,
     mutex: Io.Mutex = .init,
     routes: std.StringArrayHashMapUnmanaged(Route) = .empty,
-    calls: std.ArrayList([]const u8) = .empty,
-    /// The last `Authorization` header seen, or empty when there was none.
-    authorization: []const u8 = "",
+    calls: std.ArrayList(Call) = .empty,
     /// The last `User-Agent` header seen.
     user_agent: []const u8 = "",
     in_flight: usize = 0,
@@ -125,16 +130,33 @@ pub const Stub = struct {
         return self.calls.items.len;
     }
 
+    /// Every request, in order. The caller holds no lock, so this is only sound
+    /// once the client under test has finished.
+    pub fn seen(self: *Stub) []const Call {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return self.calls.items;
+    }
+
     pub fn peak(self: *Stub) usize {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return self.peak_in_flight;
     }
 
-    pub fn lastAuthorization(self: *Stub) []const u8 {
+    /// What the request for `path` carried in its `Authorization` header, empty
+    /// when it carried none, and null when `path` was never asked for. Recorded
+    /// per request rather than as "the last one seen", because the interesting
+    /// question is which of two requests carried the key.
+    pub fn authorizationFor(self: *Stub, path: []const u8) ?[]const u8 {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        return self.authorization;
+        for (self.calls.items) |call| {
+            if (std.mem.eql(u8, call.path, path)) {
+                return call.authorization;
+            }
+        }
+        return null;
     }
 
     pub fn lastUserAgent(self: *Stub) []const u8 {
@@ -146,7 +168,7 @@ pub const Stub = struct {
     pub fn calledOnly(self: *Stub, path: []const u8) bool {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
-        return self.calls.items.len == 1 and std.mem.eql(u8, self.calls.items[0], path);
+        return self.calls.items.len == 1 and std.mem.eql(u8, self.calls.items[0].path, path);
     }
 };
 
@@ -195,8 +217,10 @@ fn record(self: *Stub, path: []const u8, head: []const u8) ?Route {
     self.in_flight += 1;
     self.peak_in_flight = @max(self.peak_in_flight, self.in_flight);
     const owned = self.arena.allocator().dupe(u8, path) catch return null;
-    self.calls.append(self.gpa, owned) catch {};
-    self.authorization = ownedHeader(self, head, "authorization");
+    self.calls.append(self.gpa, .{
+        .path = owned,
+        .authorization = ownedHeader(self, head, "authorization"),
+    }) catch {};
     self.user_agent = ownedHeader(self, head, "user-agent");
     return self.routes.get(path);
 }
@@ -317,5 +341,41 @@ pub const Harness = struct {
         var pointed = options;
         pointed.base_url = self.stub.baseUrl(&self.url_buffer);
         return vpndetection.Client.init(self.gpa, self.io(), pointed);
+    }
+};
+
+/// A scratch directory for a test that needs a real PATH rather than a
+/// directory handle, which `Database.download` does.
+///
+/// Do not copy one after `start`: `path` hands back a slice of its own buffer.
+pub const Scratch = struct {
+    tmp: std.testing.TmpDir,
+    buffer: [128]u8 = undefined,
+
+    pub fn start() Scratch {
+        return .{ .tmp = std.testing.tmpDir(.{}) };
+    }
+
+    pub fn deinit(self: *Scratch) void {
+        self.tmp.cleanup();
+    }
+
+    /// `std.testing` puts its temporary directories under `.zig-cache/tmp` and
+    /// hands back a handle rather than a path, so the path is spelled the same
+    /// way it builds it.
+    pub fn path(self: *Scratch, name: []const u8) []const u8 {
+        return std.fmt.bufPrint(&self.buffer, ".zig-cache/tmp/{s}/{s}", .{
+            &self.tmp.sub_path,
+            name,
+        }) catch unreachable;
+    }
+
+    pub fn exists(self: *Scratch, name: []const u8) bool {
+        self.tmp.dir.access(std.testing.io, name, .{}) catch return false;
+        return true;
+    }
+
+    pub fn read(self: *Scratch, name: []const u8, buffer: []u8) ![]u8 {
+        return self.tmp.dir.readFile(std.testing.io, name, buffer);
     }
 };

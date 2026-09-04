@@ -20,15 +20,32 @@ pub const Format = enum {
     }
 };
 
+/// Everything `download` can fail with.
+///
+/// The filesystem's errors are kept distinct from the API's rather than folded
+/// into `error.Network`: a reset socket and a full disk are different problems,
+/// and only one of them is ours to retry.
+pub const DownloadError = CallError ||
+    std.Io.File.OpenError ||
+    std.Io.File.Writer.Error ||
+    std.Io.Writer.Error ||
+    std.Io.Dir.RenameError ||
+    std.Io.Dir.DeleteFileError;
+
 /// The licensed dataset downloads. Access is granted by contract rather than
 /// self-serve, and needs a key carrying the `db.download` scope.
 ///
-/// Reached through `Client.database`. Every call returns a `std.json.Parsed`
-/// whose arena owns the whole answer, so `deinit` is the entire cleanup.
+/// Reached through `Client.database`. The catalog calls return a
+/// `std.json.Parsed` whose arena owns the whole answer, so `deinit` is the
+/// entire cleanup; `downloadUrl` and `downloadBytes` return slices allocated
+/// with the allocator you gave `Client.init` and owned by you.
 pub const Database = struct {
     client: *client_mod.Client,
 
-    /// The datasets your organization is licensed to download.
+    /// The dataset families your organization is licensed to download.
+    ///
+    /// A license covers a family, so the id you pass to a download is one of
+    /// `LicensedDataset.versions`, not `LicensedDataset.base`.
     pub fn list(
         self: Database,
         options: client_mod.CallOptions,
@@ -115,6 +132,131 @@ pub const Database = struct {
         });
     }
 
+    /// Writes one dataset file to `path`, returning the bytes written.
+    ///
+    /// Nothing beyond a single chunk is ever held in memory, whatever the
+    /// dataset weighs, so this is the call to reach for by default.
+    ///
+    /// The bytes land in a neighbouring `<path>.part` that is renamed on
+    /// completion, and a transfer that stops short of the length the origin
+    /// declared is an error rather than a short file. Nothing partial survives
+    /// a failure, so a `path` that exists is a whole dataset.
+    ///
+    /// The redirect is followed, and that second request carries NO API key:
+    /// the link authorizes itself, and object storage is a third party.
+    ///
+    /// `retries` applies to reaching the API for the link, not to the transfer:
+    /// resuming a half-moved gigabyte is a different problem from asking again.
+    pub fn download(
+        self: Database,
+        id: []const u8,
+        format: Format,
+        path: []const u8,
+        options: client_mod.CallOptions,
+    ) DownloadError!u64 {
+        var scratch: Diagnostics = .{};
+        const diag = options.diagnostics orelse &scratch;
+        const gpa = self.client.gpa;
+        const io = self.client.io;
+
+        var transfer: http.Transfer = undefined;
+        try self.begin(&transfer, options, id, format, diag);
+        defer transfer.deinit();
+
+        const partial = try std.fmt.allocPrint(gpa, "{s}.part", .{path});
+        defer gpa.free(partial);
+        const buffer = try gpa.alloc(u8, 64 * 1024);
+        defer gpa.free(buffer);
+
+        const cwd: std.Io.Dir = .cwd();
+        var file = try cwd.createFile(io, partial, .{});
+        // Every way out of here but the last one removes the partial file, so a
+        // failed transfer cannot leave behind something that reads as a dataset.
+        errdefer cwd.deleteFile(io, partial) catch {};
+
+        const written = written: {
+            // Closed before the rename rather than at the end of the function:
+            // renaming a file that is still open fails outright on Windows.
+            defer file.close(io);
+            var sink = file.writer(io, buffer);
+            const moved = transfer.reader().streamRemaining(&sink.interface) catch |err| switch (err) {
+                error.ReadFailed => return transfer.readFailure(diag),
+                error.WriteFailed => return sink.err orelse error.WriteFailed,
+            };
+            sink.interface.flush() catch return sink.err orelse error.WriteFailed;
+            break :written moved;
+        };
+        try transfer.verify(written, diag);
+
+        try cwd.rename(partial, cwd, path, io);
+        return written;
+    }
+
+    /// Downloads one dataset file and hands back its bytes, allocated with the
+    /// allocator you gave `Client.init` and owned by you.
+    ///
+    /// **This holds the ENTIRE file in memory.** The catalog spans five orders
+    /// of magnitude, from `cdn_ip_v1` at ~10 KB to `resproxy_ip_90d_v1` at
+    /// 1.79 GB, so reach for this at the small end and use `download` for
+    /// anything you have not measured. `metadata` publishes the size per format
+    /// without transferring anything, which is how you find out which end you
+    /// are at.
+    ///
+    /// Byte for byte the same file `download` writes, and short of the declared
+    /// length is the same error here as there.
+    pub fn downloadBytes(
+        self: Database,
+        id: []const u8,
+        format: Format,
+        options: client_mod.CallOptions,
+    ) CallError![]u8 {
+        var scratch: Diagnostics = .{};
+        const diag = options.diagnostics orelse &scratch;
+        const gpa = self.client.gpa;
+
+        var transfer: http.Transfer = undefined;
+        try self.begin(&transfer, options, id, format, diag);
+        defer transfer.deinit();
+
+        const reader = transfer.reader();
+        // Sized once from the declared length where there is one: an allocator
+        // that grows by doubling spends twice the file on its final grow, which
+        // at the large end of the catalog is gigabytes of nothing.
+        const declared = transfer.declared orelse
+            return reader.allocRemaining(gpa, .unlimited) catch |err| switch (err) {
+                error.OutOfMemory => error.OutOfMemory,
+                error.ReadFailed => transfer.readFailure(diag),
+                error.StreamTooLong => unreachable, // .unlimited has no limit to exceed
+            };
+        const bytes = try gpa.alloc(u8, std.math.cast(usize, declared) orelse return error.OutOfMemory);
+        errdefer gpa.free(bytes);
+        // Short rather than all, so a transfer that stops early is reported with
+        // the two lengths rather than as a bare end-of-stream.
+        const received = reader.readSliceShort(bytes) catch |err| switch (err) {
+            error.ReadFailed => return transfer.readFailure(diag),
+        };
+        try transfer.verify(received, diag);
+        return bytes;
+    }
+
+    /// Asks the API for the presigned link and opens it.
+    fn begin(
+        self: Database,
+        transfer: *http.Transfer,
+        options: client_mod.CallOptions,
+        id: []const u8,
+        format: Format,
+        diag: *Diagnostics,
+    ) CallError!void {
+        const gpa = self.client.gpa;
+        const url = try self.downloadUrl(id, format, .{
+            .retries = options.retries,
+            .diagnostics = diag,
+        });
+        defer gpa.free(url);
+        return transfer.begin(&self.client.transport, gpa, url, diag);
+    }
+
     fn fetch(
         self: Database,
         comptime T: type,
@@ -155,23 +297,44 @@ pub const Database = struct {
 
 /// Mirrors `components.schemas.LicensedDataset` in spec/openapi.yaml.
 ///
+/// One dataset FAMILY. A license is held against the family, while a download
+/// names one version of it, so the ids `download`, `downloadBytes`,
+/// `downloadUrl` and `checksums` take come from `versions` rather than from
+/// here.
+///
 /// `redistribution` and the other closed sets stay strings rather than Zig
 /// enums: a value added to the API after this release would otherwise fail the
 /// whole response to parse, and a client that cannot read today's answer is
 /// worse than one that cannot name tomorrow's value.
 pub const LicensedDataset = struct {
-    id: []const u8,
+    /// The family, e.g. `vpn_ip`. What the license is held against.
+    base: []const u8,
     name: []const u8,
     summary: ?[]const u8 = null,
-    /// Licensed but no longer published.
-    retired: ?bool = null,
     /// What your license permits: `evaluation`, `internal` or `redistribute`.
     redistribution: []const u8,
     starts: ?[]const u8 = null,
+    /// Null when the license does not expire.
     expires: ?[]const u8 = null,
     /// False when the license has lapsed; downloads are refused.
     in_term: bool,
+    /// `licensed` is a live grant, `expired` one whose term has ended, and
+    /// `unlicensed` a dataset published but never bought.
+    standing: []const u8,
+    versions: []const LicensedVersion,
+};
+
+/// Mirrors `components.schemas.LicensedVersion`. One published version of a
+/// family, and the only place a downloadable id comes from.
+pub const LicensedVersion = struct {
+    /// The versioned dataset id, e.g. `vpn_ip_v1`. This is what you download.
+    id: []const u8,
+    version: i64,
+    summary: ?[]const u8 = null,
     formats: []const DatasetFormatSize,
+    /// The formats an evaluation sample is published in, if any. Spelled the
+    /// way the wire spells it, so `std.json` needs no rename table.
+    sampleFormats: ?[]const []const u8 = null,
 };
 
 pub const DatasetFormatSize = struct {
