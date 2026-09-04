@@ -55,7 +55,7 @@ defer client.deinit();
 
 ### Memory
 
-Everything the client hands back is allocated with the allocator you gave `init`, and is yours to free. A `Lookup` and a `Batch` each carry a `deinit`, the database calls return a `std.json.Parsed` that owns its arena, and `downloadUrl` returns a slice. The test suite runs under `std.testing.allocator`, so a leak fails the build.
+Everything the client hands back is allocated with the allocator you gave `init`, and is yours to free. A `Lookup` and a `Batch` each carry a `deinit`, the catalog calls return a `std.json.Parsed` that owns its arena, and `downloadUrl` and `downloadBytes` return slices. The test suite runs under `std.testing.allocator`, so a leak fails the build.
 
 ### With an API key
 
@@ -172,17 +172,30 @@ Note that `RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are not 
 
 ### Database downloads
 
-If your key carries the `db.download` scope, the licensed datasets are available through `client.database()`:
+If your key carries the `db.download` scope, the licensed datasets are available through `client.database()`. A licence covers a dataset *family*, and you download one of its versions:
 
 ```zig
 const datasets = try client.database().list(.{});
 defer datasets.deinit();
+const id = datasets.value[0].versions[0].id; // e.g. vpn_ip_extended_v1
 
-const url = try client.database().downloadUrl("vpn_ip_extended_v1", .mmdb, .{});
+// A time-limited link, so something else can do the transfer.
+const url = try client.database().downloadUrl(id, .mmdb, .{});
 defer gpa.free(url);
+
+// The bytes, in memory.
+const bytes = try client.database().downloadBytes(id, .mmdb, .{});
+defer gpa.free(bytes);
+
+// Straight to a file, which is the one to reach for by default.
+const written = try client.database().download(id, .mmdb, "vpn_ip.mmdb", .{});
 ```
 
-`downloadUrl` returns a time-limited link rather than the bytes, so you choose how to transfer a file that can run to gigabytes. The client never follows that redirect for you.
+`download` holds nothing but a single chunk in memory whatever the dataset weighs. It writes to a neighbouring `.part` file and renames it on completion, and a transfer that stops short of the length the origin declared is an error rather than a short file, so a path that exists is a whole dataset and nothing partial survives a failure.
+
+`downloadBytes` holds the **entire file** in memory. The catalog spans five orders of magnitude, from `cdn_ip_v1` at ~10 KB to `resproxy_ip_90d_v1` at 1.79 GB, and a 1.79 GB dataset is 1.79 GB of resident memory here, so reach for it at the small end. `client.database().metadata(id, .{})` publishes the size per format without transferring anything, which is how you find out which end you are at.
+
+`downloadUrl` hands back the link rather than the bytes, so you choose how to move the file; the link authorizes the START of a transfer, so one already running is not interrupted when it lapses. The client never follows that redirect for you. `download` and `downloadBytes` do follow it, and that second request carries no API key: the link authorizes itself, and object storage has no business holding your credential.
 
 ### Absent is not false
 

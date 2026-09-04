@@ -73,6 +73,17 @@ fn examples(gpa: std.mem.Allocator) !void {
 
     const datasets = try client.database().list(.{});
     defer datasets.deinit();
-    const url = try client.database().downloadUrl("vpn_ip_extended_v1", .mmdb, .{});
+    const id = datasets.value[0].versions[0].id;
+
+    const url = try client.database().downloadUrl(id, .mmdb, .{});
     defer gpa.free(url);
+
+    const bytes = try client.database().downloadBytes(id, .mmdb, .{});
+    defer gpa.free(bytes);
+
+    const written = try client.database().download(id, .mmdb, "vpn_ip.mmdb", .{});
+    _ = written;
+
+    const size = try client.database().metadata(id, .{});
+    defer size.deinit();
 }
