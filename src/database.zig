@@ -311,7 +311,7 @@ pub const LicensedDataset = struct {
     base: []const u8,
     name: []const u8,
     summary: ?[]const u8 = null,
-    /// What your license permits: `evaluation`, `internal` or `redistribute`.
+    /// What your license permits: `evaluation`, `standard` or `redistribute`.
     license_type: []const u8,
     starts: ?[]const u8 = null,
     /// Null when the license does not expire.
