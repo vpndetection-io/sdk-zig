@@ -13,7 +13,7 @@ const staging = @import("staging.zig");
 
 const Tier = staging.tiers.Tier;
 
-/// The max organization licenses cdn_ip for redistribution, and at ~10 KB it is
+/// The max organization licenses cdn_ip for license_type, and at ~10 KB it is
 /// the only dataset small enough to move in CI.
 const dataset_id = "cdn_ip_v1";
 const format: vpndetection.Format = .csvgz;
@@ -56,7 +56,7 @@ test "the licensed catalogue answers the schema the client was written from" {
         try std.testing.expect(family.base.len > 0);
         try std.testing.expect(family.name.len > 0);
         try expectOneOf("standing", family.standing, &.{ "expired", "licensed", "unlicensed" });
-        try expectOneOf("redistribution", family.redistribution, &.{ "evaluation", "internal", "redistribute" });
+        try expectOneOf("license_type", family.license_type, &.{ "evaluation", "standard", "redistribute" });
         // The point of the family shape: a license covers the family, and these
         // are the ids the download and checksum calls take. Before the spec was
         // corrected this list did not exist, so `list` could not tell a caller

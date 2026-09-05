@@ -302,7 +302,7 @@ pub const Database = struct {
 /// `downloadUrl` and `checksums` take come from `versions` rather than from
 /// here.
 ///
-/// `redistribution` and the other closed sets stay strings rather than Zig
+/// `license_type` and the other closed sets stay strings rather than Zig
 /// enums: a value added to the API after this release would otherwise fail the
 /// whole response to parse, and a client that cannot read today's answer is
 /// worse than one that cannot name tomorrow's value.
@@ -312,7 +312,7 @@ pub const LicensedDataset = struct {
     name: []const u8,
     summary: ?[]const u8 = null,
     /// What your license permits: `evaluation`, `internal` or `redistribute`.
-    redistribution: []const u8,
+    license_type: []const u8,
     starts: ?[]const u8 = null,
     /// Null when the license does not expire.
     expires: ?[]const u8 = null,

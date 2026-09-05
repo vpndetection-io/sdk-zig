@@ -277,7 +277,7 @@ test "the database list unwraps a family and its versions" {
     defer harness.deinit();
     try harness.stub.route("/api/v1/database/list", .ok(
         \\{"datasets":[{"base":"vpn_ip_extended","name":"VPN IP Extended",
-        \\ "redistribution":"internal","in_term":true,"standing":"licensed",
+        \\ "license_type":"standard","in_term":true,"standing":"licensed",
         \\ "versions":[{"id":"vpn_ip_extended_v1","version":1,
         \\   "formats":[{"format":"mmdb","bytes":1234}],"sampleFormats":["csvgz"]}]}]}
     ));
