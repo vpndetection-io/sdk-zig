@@ -1,6 +1,6 @@
 .{
     .name = .vpndetection,
-    .version = "1.3.0",
+    .version = "1.3.1",
     .fingerprint = 0x6d926123e0cf9ef6, // Changing this has security and trust implications.
     .minimum_zig_version = "0.16.0",
     .paths = .{
