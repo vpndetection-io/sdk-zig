@@ -100,8 +100,12 @@ pub const Client = struct {
 
         // Bearer only. The API also accepts X-Api-Key and ?apikey=; a key
         // belongs in one header, not in a query string a proxy will log.
+        // An EMPTY key is treated as no key. It is what an unset environment
+        // variable or CI secret interpolates to, and `Bearer ` with nothing
+        // behind it is never what anyone meant - the API would reject it, but
+        // as an unauthorized request rather than as the anonymous one intended.
         const authorization = if (options.api_key) |key|
-            try std.fmt.allocPrint(gpa, "Bearer {s}", .{key})
+            (if (key.len == 0) null else try std.fmt.allocPrint(gpa, "Bearer {s}", .{key}))
         else
             null;
         errdefer if (authorization) |value| gpa.free(value);
