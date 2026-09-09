@@ -316,6 +316,14 @@ pub const LicensedDataset = struct {
     starts: ?[]const u8 = null,
     /// Null when the license does not expire.
     expires: ?[]const u8 = null,
+    /// When a rolling license next renews. Null when the license has no defined
+    /// term, when `expires` sets a hard stop instead, and when there is no
+    /// license.
+    renews_at: ?[]const u8 = null,
+    /// The last day notice of non-renewal can be given for the term ending at
+    /// `renews_at`. Null whenever that is, and when the agreement records no
+    /// notice period.
+    notice_due_at: ?[]const u8 = null,
     /// False when the license has lapsed; downloads are refused.
     in_term: bool,
     /// `licensed` is a live grant, `expired` one whose term has ended, and
