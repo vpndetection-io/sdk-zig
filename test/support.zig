@@ -197,6 +197,14 @@ fn serve(self: *Stub, stream: Io.net.Stream) void {
     if (self.delay.nanoseconds > 0) {
         self.io.sleep(self.delay, .awake) catch {};
     }
+    // Leave the in-flight window BEFORE writing, so what is measured is the
+    // deliberate delay and nothing else. A client stops counting a request the
+    // moment it reads the answer, so decrementing after the write measures a
+    // window wider than the client's own: on a loaded runner the next request
+    // arrives and increments before this thread is scheduled again, and a
+    // correctly-bounded batch reads as one OVER its limit.
+    release(self);
+
     // An unrouted address gets what the real API gives one, so a test that
     // forgets a route fails as a bad request rather than as a hang.
     const answer = found orelse Route{
@@ -204,7 +212,9 @@ fn serve(self: *Stub, stream: Io.net.Stream) void {
         .body = "{\"error\":\"not a valid IP address\"}",
     };
     writeResponse(self.io, stream, answer) catch {};
+}
 
+fn release(self: *Stub) void {
     self.mutex.lockUncancelable(self.io);
     defer self.mutex.unlock(self.io);
     self.in_flight -= 1;
