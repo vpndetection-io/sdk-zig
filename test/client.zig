@@ -276,7 +276,7 @@ test "the database list unwraps a family and its versions" {
     const harness = try Harness.start(gpa);
     defer harness.deinit();
     try harness.stub.route("/api/v1/database/list", .ok(
-        \\{"datasets":[{"base":"vpn_ip_extended","name":"VPN IP Extended",
+        \\{"datasets":[{"base":"vpn_ip_extended","name":"VPN IP Extended","summary":"vpn_ip rows","starts":"2026-01-01T00:00:00.000Z","expires":null,"renews_at":null,"notice_due_at":null,
         \\ "license_type":"standard","in_term":true,"standing":"licensed",
         \\ "versions":[{"id":"vpn_ip_extended_v1","version":1,
         \\   "formats":[{"format":"mmdb","bytes":1234}],"sampleFormats":["csvgz"]}]}]}
