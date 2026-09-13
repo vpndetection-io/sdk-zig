@@ -38,16 +38,22 @@ if ! docker image inspect "$ZIG_IMAGE" >/dev/null 2>&1 ; then
         -f scripts/Dockerfile scripts >&2
 fi
 
+# Every exported VPNDETECTION_* variable is forwarded by NAME, rather than a list
+# of them spelled out here. `-e NAME` with no `=` takes the value from this
+# environment, so an unset one stays unset inside rather than arriving as the
+# empty string. The integration suite owns which credentials it wants; this
+# wrapper only has to not lose them, and adding a tier no longer means editing a
+# toolchain script that has nothing to do with tiers.
+env_args=()
+for name in $(compgen -e | grep '^VPNDETECTION_' || true) ; do
+    env_args+=(-e "$name")
+done
+
 exec docker run --rm -i \
     -v "$PWD:/work" \
     -v "${ZIG_CACHE_VOLUME}:/zig-cache" \
     -e ZIG_LOCAL_CACHE_DIR=/zig-cache/local \
     -e ZIG_GLOBAL_CACHE_DIR=/zig-cache/global \
-    -e VPNDETECTION_LIVE="${VPNDETECTION_LIVE:-}" \
-    -e VPNDETECTION_API_KEY="${VPNDETECTION_API_KEY:-}" \
-    -e VPNDETECTION_STAGING_KEY_FREE="${VPNDETECTION_STAGING_KEY_FREE:-}" \
-    -e VPNDETECTION_STAGING_KEY_STARTER="${VPNDETECTION_STAGING_KEY_STARTER:-}" \
-    -e VPNDETECTION_STAGING_KEY_SCALE="${VPNDETECTION_STAGING_KEY_SCALE:-}" \
-    -e VPNDETECTION_STAGING_KEY_MAX="${VPNDETECTION_STAGING_KEY_MAX:-}" \
+    "${env_args[@]+"${env_args[@]}"}" \
     -w "/work${ZIG_WORKDIR:+/$ZIG_WORKDIR}" \
     "$ZIG_IMAGE" "$@"
