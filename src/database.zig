@@ -312,7 +312,8 @@ pub const Database = struct {
     name: []const u8,
     summary: ?[]const u8 = null,
     /// What your license permits: `evaluation`, `standard` or `redistribute`.
-    license_type: []const u8,
+    /// Null for a family you hold no license for, which `list` now returns.
+    license_type: ?[]const u8 = null,
     starts: ?[]const u8 = null,
     /// Null when the license does not expire.
     expires: ?[]const u8 = null,

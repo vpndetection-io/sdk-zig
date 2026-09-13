@@ -56,7 +56,13 @@ test "the licensed catalogue answers the schema the client was written from" {
         try std.testing.expect(family.base.len > 0);
         try std.testing.expect(family.name.len > 0);
         try expectOneOf("standing", family.standing, &.{ "expired", "licensed", "unlicensed" });
-        try expectOneOf("license_type", family.license_type, &.{ "evaluation", "standard", "redistribute" });
+        // Null for a family this org holds no license for, which the listing
+        // now includes - `standing` is what says which is which.
+        if (family.license_type) |lt| {
+            try expectOneOf("license_type", lt, &.{ "evaluation", "standard", "redistribute" });
+        } else {
+            try std.testing.expectEqualStrings("unlicensed", family.standing);
+        }
         // The point of the family shape: a license covers the family, and these
         // are the ids the download and checksum calls take. Before the spec was
         // corrected this list did not exist, so `list` could not tell a caller
