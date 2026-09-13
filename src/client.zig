@@ -1,5 +1,6 @@
 const std = @import("std");
 
+const account_mod = @import("account.zig");
 const bogon = @import("bogon.zig");
 const cache_mod = @import("cache.zig");
 const database_mod = @import("database.zig");
@@ -11,7 +12,9 @@ const Allocator = std.mem.Allocator;
 const CallError = errors.CallError;
 const Diagnostics = errors.Diagnostics;
 const Io = std.Io;
+const Account = account_mod.Account;
 const Lookup = lookup_mod.Lookup;
+const Parsed = std.json.Parsed;
 
 /// The production API. Override it with `Options.base_url`.
 pub const default_base_url = "https://api.vpndetection.io";
@@ -192,6 +195,90 @@ pub const Client = struct {
             cache.put(self.io, ip, body);
         }
         return result;
+    }
+
+    /// Classifies the address this client is calling from. The caller owns the
+    /// result and must `deinit` it.
+    ///
+    /// The same answer `lookup` would give for that address, at the same cost
+    /// against your allowance. The address is the one our edge observed, so a
+    /// call made through a proxy or a VPN reports the exit it left through -
+    /// usually the point of asking.
+    ///
+    /// Deliberately NOT cached. The cache is keyed by address, and which
+    /// address this is IS the question: a machine that moves between networks
+    /// would otherwise be told where it used to be.
+    pub fn myIp(self: *Client) CallError!Lookup {
+        return self.myIpWith(.{});
+    }
+
+    /// `myIp`, with this call's own retry budget and somewhere to put the
+    /// detail behind a failure.
+    pub fn myIpWith(self: *Client, options: CallOptions) CallError!Lookup {
+        var scratch: Diagnostics = .{};
+        const diag = options.diagnostics orelse &scratch;
+        diag.reset();
+
+        const body = try http.send(&self.transport, self.gpa, self.io, .{
+            .path = "/myip",
+            .retries = options.retries orelse self.retries,
+            .diagnostics = diag,
+        });
+        defer self.gpa.free(body);
+        return self.parse(body, diag);
+    }
+
+    /// What this client's key is entitled to, and how much of it has been used.
+    /// The caller owns the answer and must `deinit` it.
+    ///
+    /// Named for what it answers rather than `me`, which sits one letter from
+    /// `myIp` and means something quite different: one is which address you are
+    /// calling FROM, the other is which account you are calling AS.
+    ///
+    /// Unlike a lookup there is no useful unauthenticated answer, so a client
+    /// built without an API key gets `error.Unauthorized` rather than a partial
+    /// one.
+    ///
+    /// Usage counts against the ALLOWANCE WINDOW - the anniversary of the
+    /// subscription, not the calendar month and not the billing period - and it
+    /// is the same number a lookup is gated on.
+    ///
+    /// Deliberately NOT cached: the whole point is what has been spent, and a
+    /// cached answer is a wrong one within seconds of the next request.
+    pub fn myAccount(self: *Client) CallError!Parsed(Account) {
+        return self.myAccountWith(.{});
+    }
+
+    /// `myAccount`, with this call's own retry budget and somewhere to put the
+    /// detail behind a failure.
+    pub fn myAccountWith(self: *Client, options: CallOptions) CallError!Parsed(Account) {
+        var scratch: Diagnostics = .{};
+        const diag = options.diagnostics orelse &scratch;
+        diag.reset();
+
+        const body = try http.send(&self.transport, self.gpa, self.io, .{
+            .path = "/api/v1/account/me",
+            .retries = options.retries orelse self.retries,
+            .diagnostics = diag,
+        });
+        defer self.gpa.free(body);
+
+        const parsed = try self.gpa.create(std.heap.ArenaAllocator);
+        errdefer self.gpa.destroy(parsed);
+        parsed.* = .init(self.gpa);
+        errdefer parsed.deinit();
+
+        const arena = parsed.allocator();
+        // Parsed from a copy the arena owns, so every string in the answer
+        // outlives the body this call frees.
+        const owned = try arena.dupe(u8, body);
+        const value = std.json.parseFromSliceLeaky(Account, arena, owned, .{
+            .ignore_unknown_fields = true,
+        }) catch {
+            diag.setMessage("the answer did not match the documented shape");
+            return error.ServerError;
+        };
+        return .{ .arena = parsed, .value = value };
     }
 
     /// Classifies many addresses concurrently. The caller owns the batch and

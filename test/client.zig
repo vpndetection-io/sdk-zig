@@ -507,3 +507,112 @@ test "a dataset the organization does not license is refused once" {
     // Nothing may be created for a download that never started.
     try std.testing.expect(!scratch.exists("data.csv.gz.part"));
 }
+
+const account_body =
+    \\{
+    \\  "org_id": "85bb51e4-2eb6-4a31-8e4d-02ba8b98fe61",
+    \\  "apikey": {
+    \\    "id": "0ab424cc-7619-4dad-b027-afacdc2cedb0",
+    \\    "expires": null,
+    \\    "allowed_cidrs": []
+    \\  },
+    \\  "plan": {"key": "max", "tier": "max"},
+    \\  "usage": {
+    \\    "requests": 580,
+    \\    "quota": 5000000,
+    \\    "hard_limit": null,
+    \\    "window_start": "2026-09-04T07:00:00Z",
+    \\    "window_end": "2026-10-04T07:00:00Z"
+    \\  }
+    \\}
+;
+
+test "myIp classifies the calling address" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/myip", .ok("{\"ip\":\"45.83.91.1\",\"is_vpn\":true}"));
+
+    var client = try harness.client(.{});
+    defer client.deinit();
+
+    var answer = try client.myIp();
+    defer answer.deinit();
+
+    try std.testing.expectEqualStrings("45.83.91.1", answer.value.ip);
+    try std.testing.expectEqual(true, answer.value.is_vpn);
+}
+
+// The cache is keyed by address, and which address this is IS the question: a
+// machine that moves between networks would otherwise be told where it used to be.
+test "myIp is not cached" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/myip", .ok("{\"ip\":\"45.83.91.1\",\"is_vpn\":true}"));
+
+    var client = try harness.client(.{});
+    defer client.deinit();
+
+    var first = try client.myIp();
+    first.deinit();
+    var second = try client.myIp();
+    second.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), harness.stub.callCount());
+}
+
+test "myAccount reports the plan and the usage" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v1/account/me", .ok(account_body));
+
+    var client = try harness.client(.{});
+    defer client.deinit();
+
+    const account = try client.myAccount();
+    defer account.deinit();
+
+    try std.testing.expectEqualStrings("max", account.value.plan.key);
+    try std.testing.expectEqualStrings("max", account.value.plan.tier);
+    try std.testing.expectEqual(@as(i64, 580), account.value.usage.requests);
+    try std.testing.expectEqual(@as(i64, 5_000_000), account.value.usage.quota);
+    // Null means NEVER stop, which is not the same as a limit of zero.
+    try std.testing.expectEqual(@as(?i64, null), account.value.usage.hard_limit);
+    try std.testing.expectEqual(@as(usize, 0), account.value.apikey.allowed_cidrs.len);
+}
+
+// The whole point is what has been spent.
+test "myAccount is not cached" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v1/account/me", .ok(account_body));
+
+    var client = try harness.client(.{});
+    defer client.deinit();
+
+    const first = try client.myAccount();
+    first.deinit();
+    const second = try client.myAccount();
+    second.deinit();
+
+    try std.testing.expectEqual(@as(usize, 2), harness.stub.callCount());
+}
+
+// Unlike a lookup there is no useful unauthenticated answer.
+test "myAccount surfaces an unauthorized key" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v1/account/me", .{
+        .status = 401,
+        .body = "{\"error\":\"invalid API key\"}",
+    });
+
+    var client = try harness.client(.{ .retries = 0 });
+    defer client.deinit();
+
+    try std.testing.expectError(error.Unauthorized, client.myAccount());
+}
