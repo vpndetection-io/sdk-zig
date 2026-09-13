@@ -45,7 +45,7 @@ test "the licensed catalogue answers the schema the client was written from" {
         .{},
     );
     defer served.deinit();
-    const first = served.value.object.get("datasets").?.array.items[0].object;
+    const first = served.value.object.get("databases").?.array.items[0].object;
     try std.testing.expect(first.contains("base"));
     try std.testing.expect(first.contains("versions"));
     // A docs-site slug, not API surface. It was in the spec once and the client
