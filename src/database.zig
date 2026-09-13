@@ -39,32 +39,32 @@ pub const DownloadError = CallError ||
 /// `std.json.Parsed` whose arena owns the whole answer, so `deinit` is the
 /// entire cleanup; `downloadUrl` and `downloadBytes` return slices allocated
 /// with the allocator you gave `Client.init` and owned by you.
-pub const Database = struct {
+pub const DatabaseApi = struct {
     client: *client_mod.Client,
 
-    /// The dataset families your organization is licensed to download.
+    /// The database families your organization is licensed to download.
     ///
     /// A license covers a family, so the id you pass to a download is one of
-    /// `LicensedDataset.versions`, not `LicensedDataset.base`.
+    /// `Database.versions`, not `Database.base`.
     pub fn list(
-        self: Database,
+        self: DatabaseApi,
         options: client_mod.CallOptions,
-    ) CallError!Parsed([]const LicensedDataset) {
-        const answer = try self.fetch(DatasetList, "/api/v1/database/list", &.{}, options);
-        return .{ .arena = answer.arena, .value = answer.value.datasets };
+    ) CallError!Parsed([]const Database) {
+        const answer = try self.fetch(DatabaseList, "/api/v1/database/list", &.{}, options);
+        return .{ .arena = answer.arena, .value = answer.value.databases };
     }
 
-    /// What is inside one dataset: schema, samples, row count and sizes.
+    /// What is inside one database: schema, samples, row count and sizes.
     ///
     /// It carries `updated` and `entries` without downloading anything, so poll
     /// it to decide whether today's build is worth fetching.
     pub fn metadata(
-        self: Database,
+        self: DatabaseApi,
         id: []const u8,
         options: client_mod.CallOptions,
-    ) CallError!Parsed(DatasetMetadata) {
+    ) CallError!Parsed(DatabaseMetadata) {
         const query = [_]Param{.{ .name = "id", .value = id }};
-        return self.fetch(DatasetMetadata, "/api/v1/database/metadata", &query, options);
+        return self.fetch(DatabaseMetadata, "/api/v1/database/metadata", &query, options);
     }
 
     /// The digests of one published file, for verifying a download.
@@ -74,11 +74,11 @@ pub const Database = struct {
     /// `checksums` in the response, and reading a top-level `sha256` is how the
     /// Node SDK shipped this broken in 1.0.x.
     pub fn checksums(
-        self: Database,
+        self: DatabaseApi,
         id: []const u8,
         format: Format,
         options: client_mod.CallOptions,
-    ) CallError!Parsed(DatasetChecksums) {
+    ) CallError!Parsed(DbChecksums) {
         const query = [_]Param{
             .{ .name = "id", .value = id },
             .{ .name = "format", .value = format.toString() },
@@ -90,7 +90,7 @@ pub const Database = struct {
     /// Your organization's recent download attempts, newest first. Null takes
     /// the API's own default.
     pub fn downloads(
-        self: Database,
+        self: DatabaseApi,
         limit: ?u32,
         options: client_mod.CallOptions,
     ) CallError!Parsed([]const Download) {
@@ -113,7 +113,7 @@ pub const Database = struct {
     /// runs to gigabytes; the link authorizes the START of a transfer, so one
     /// already running is not interrupted when it lapses.
     pub fn downloadUrl(
-        self: Database,
+        self: DatabaseApi,
         id: []const u8,
         format: Format,
         options: client_mod.CallOptions,
@@ -148,7 +148,7 @@ pub const Database = struct {
     /// `retries` applies to reaching the API for the link, not to the transfer:
     /// resuming a half-moved gigabyte is a different problem from asking again.
     pub fn download(
-        self: Database,
+        self: DatabaseApi,
         id: []const u8,
         format: Format,
         path: []const u8,
@@ -205,7 +205,7 @@ pub const Database = struct {
     /// Byte for byte the same file `download` writes, and short of the declared
     /// length is the same error here as there.
     pub fn downloadBytes(
-        self: Database,
+        self: DatabaseApi,
         id: []const u8,
         format: Format,
         options: client_mod.CallOptions,
@@ -241,7 +241,7 @@ pub const Database = struct {
 
     /// Asks the API for the presigned link and opens it.
     fn begin(
-        self: Database,
+        self: DatabaseApi,
         transfer: *http.Transfer,
         options: client_mod.CallOptions,
         id: []const u8,
@@ -258,7 +258,7 @@ pub const Database = struct {
     }
 
     fn fetch(
-        self: Database,
+        self: DatabaseApi,
         comptime T: type,
         path: []const u8,
         query: []const Param,
@@ -295,7 +295,7 @@ pub const Database = struct {
     }
 };
 
-/// Mirrors `components.schemas.LicensedDataset` in spec/openapi.yaml.
+/// Mirrors `components.schemas.Database` in spec/openapi.yaml.
 ///
 /// One dataset FAMILY. A license is held against the family, while a download
 /// names one version of it, so the ids `download`, `downloadBytes`,
@@ -306,7 +306,7 @@ pub const Database = struct {
 /// enums: a value added to the API after this release would otherwise fail the
 /// whole response to parse, and a client that cannot read today's answer is
 /// worse than one that cannot name tomorrow's value.
-pub const LicensedDataset = struct {
+pub const Database = struct {
     /// The family, e.g. `vpn_ip`. What the license is held against.
     base: []const u8,
     name: []const u8,
@@ -329,23 +329,23 @@ pub const LicensedDataset = struct {
     /// `licensed` is a live grant, `expired` one whose term has ended, and
     /// `unlicensed` a dataset published but never bought.
     standing: []const u8,
-    versions: []const LicensedVersion,
+    versions: []const DatabaseVersion,
 };
 
-/// Mirrors `components.schemas.LicensedVersion`. One published version of a
+/// Mirrors `components.schemas.DatabaseVersion`. One published version of a
 /// family, and the only place a downloadable id comes from.
-pub const LicensedVersion = struct {
+pub const DatabaseVersion = struct {
     /// The versioned dataset id, e.g. `vpn_ip_v1`. This is what you download.
     id: []const u8,
     version: i64,
     summary: ?[]const u8 = null,
-    formats: []const DatasetFormatSize,
+    formats: []const DatabaseFormatSize,
     /// The formats an evaluation sample is published in, if any. Spelled the
     /// way the wire spells it, so `std.json` needs no rename table.
-    sampleFormats: ?[]const []const u8 = null,
+    sample_formats: ?[]const []const u8 = null,
 };
 
-pub const DatasetFormatSize = struct {
+pub const DatabaseFormatSize = struct {
     format: []const u8,
     /// Null when the file has not been published yet.
     bytes: ?i64,
@@ -360,7 +360,7 @@ pub const Download = struct {
     created: []const u8,
 };
 
-pub const DatasetMetadataColumn = struct {
+pub const DatabaseMetadataColumn = struct {
     name: []const u8,
     /// `type` is a keyword, so the field is spelled with an identifier literal;
     /// the wire name it matches is still `type`.
@@ -368,14 +368,14 @@ pub const DatasetMetadataColumn = struct {
     description: ?[]const u8 = null,
 };
 
-/// Mirrors `components.schemas.DatasetMetadata`. The three maps are keyed by
+/// Mirrors `components.schemas.DatabaseMetadata`. The three maps are keyed by
 /// format, which is why they are hash maps rather than structs.
-pub const DatasetMetadata = struct {
+pub const DatabaseMetadata = struct {
     id: []const u8,
     update_freq: ?[]const u8 = null,
     updated: []const u8,
     entries: i64,
-    schema: std.json.ArrayHashMap([]const DatasetMetadataColumn) = .{},
+    schema: std.json.ArrayHashMap([]const DatabaseMetadataColumn) = .{},
     sample: std.json.ArrayHashMap([]const std.json.Value) = .{},
     size: std.json.ArrayHashMap(i64) = .{},
     /// How many rows the sample holds, and what it weighs per format. Keyed the
@@ -385,17 +385,17 @@ pub const DatasetMetadata = struct {
 };
 
 /// Which digests are present varies by dataset.
-pub const DatasetChecksums = struct {
+pub const DbChecksums = struct {
     md5: ?[]const u8 = null,
     sha1: ?[]const u8 = null,
     sha256: ?[]const u8 = null,
     sha512: ?[]const u8 = null,
 };
 
-const DatasetList = struct { datasets: []const LicensedDataset };
+const DatabaseList = struct { databases: []const Database };
 const DownloadList = struct { downloads: []const Download };
 const ChecksumResponse = struct {
     id: []const u8,
     format: []const u8,
-    checksums: DatasetChecksums,
+    checksums: DbChecksums,
 };

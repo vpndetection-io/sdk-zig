@@ -250,7 +250,7 @@ pub const Client = struct {
 
     /// The licensed dataset downloads, for keys carrying the `db.download`
     /// scope.
-    pub fn database(self: *Client) database_mod.Database {
+    pub fn database(self: *Client) database_mod.DatabaseApi {
         return .{ .client = self };
     }
 

@@ -71,9 +71,9 @@ fn examples(gpa: std.mem.Allocator) !void {
     };
     defer answer.deinit();
 
-    const datasets = try client.database().list(.{});
-    defer datasets.deinit();
-    const id = datasets.value[0].versions[0].id;
+    const databases = try client.database().list(.{});
+    defer databases.deinit();
+    const id = databases.value[0].versions[0].id;
 
     const url = try client.database().downloadUrl(id, .mmdb, .{});
     defer gpa.free(url);

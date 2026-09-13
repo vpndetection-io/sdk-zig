@@ -276,19 +276,19 @@ test "the database list unwraps a family and its versions" {
     const harness = try Harness.start(gpa);
     defer harness.deinit();
     try harness.stub.route("/api/v1/database/list", .ok(
-        \\{"datasets":[{"base":"vpn_ip_extended","name":"VPN IP Extended","summary":"vpn_ip rows","starts":"2026-01-01T00:00:00.000Z","expires":null,"renews_at":null,"notice_due_at":null,
+        \\{"databases":[{"base":"vpn_ip_extended","name":"VPN IP Extended","summary":"vpn_ip rows","starts":"2026-01-01T00:00:00.000Z","expires":null,"renews_at":null,"notice_due_at":null,
         \\ "license_type":"standard","in_term":true,"standing":"licensed",
         \\ "versions":[{"id":"vpn_ip_extended_v1","version":1,
-        \\   "formats":[{"format":"mmdb","bytes":1234}],"sampleFormats":["csvgz"]}]}]}
+        \\   "formats":[{"format":"mmdb","bytes":1234}],"sample_formats":["csvgz"]}]}]}
     ));
 
     var client = try harness.client(.{ .api_key = "key" });
     defer client.deinit();
-    const datasets = try client.database().list(.{});
-    defer datasets.deinit();
+    const databases = try client.database().list(.{});
+    defer databases.deinit();
 
-    try std.testing.expectEqual(1, datasets.value.len);
-    const family = datasets.value[0];
+    try std.testing.expectEqual(1, databases.value.len);
+    const family = databases.value[0];
     try std.testing.expectEqualStrings("vpn_ip_extended", family.base);
     try std.testing.expectEqualStrings("licensed", family.standing);
     try std.testing.expectEqual(1, family.versions.len);
@@ -296,7 +296,7 @@ test "the database list unwraps a family and its versions" {
     try std.testing.expectEqual(1, family.versions[0].version);
     try std.testing.expectEqualStrings("mmdb", family.versions[0].formats[0].format);
     try std.testing.expectEqual(1234, family.versions[0].formats[0].bytes.?);
-    try std.testing.expectEqualStrings("csvgz", family.versions[0].sampleFormats.?[0]);
+    try std.testing.expectEqualStrings("csvgz", family.versions[0].sample_formats.?[0]);
 }
 
 // A 404 from a bad dataset id is a CLIENT error. Letting it fall through to the

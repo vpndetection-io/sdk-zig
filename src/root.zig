@@ -51,16 +51,17 @@ pub const Lookup = @import("lookup.zig").Lookup;
 pub const ProxyDetail = @import("lookup.zig").ProxyDetail;
 pub const VpnDetail = @import("lookup.zig").VpnDetail;
 
-pub const Database = @import("database.zig").Database;
-pub const DatasetChecksums = @import("database.zig").DatasetChecksums;
-pub const DatasetFormatSize = @import("database.zig").DatasetFormatSize;
-pub const DatasetMetadata = @import("database.zig").DatasetMetadata;
-pub const DatasetMetadataColumn = @import("database.zig").DatasetMetadataColumn;
+pub const DatabaseApi = @import("database.zig").DatabaseApi;
+pub const DbChecksums = @import("database.zig").DbChecksums;
+pub const DatabaseFormatSize = @import("database.zig").DatabaseFormatSize;
+pub const DatabaseMetadata = @import("database.zig").DatabaseMetadata;
+pub const DatabaseMetadataColumn = @import("database.zig").DatabaseMetadataColumn;
 pub const Download = @import("database.zig").Download;
 pub const DownloadError = @import("database.zig").DownloadError;
 pub const Format = @import("database.zig").Format;
-pub const LicensedDataset = @import("database.zig").LicensedDataset;
-pub const LicensedVersion = @import("database.zig").LicensedVersion;
+pub const Database = @import("database.zig").Database;
+
+pub const DatabaseVersion = @import("database.zig").DatabaseVersion;
 
 pub const CallError = @import("errors.zig").CallError;
 pub const Diagnostics = @import("errors.zig").Diagnostics;

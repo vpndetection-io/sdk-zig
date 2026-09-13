@@ -172,12 +172,12 @@ Note that `RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are not 
 
 ### Database downloads
 
-If your key carries the `db.download` scope, the licensed datasets are available through `client.database()`. A licence covers a dataset *family*, and you download one of its versions:
+If your key carries the `db.download` scope, the licensed databases are available through `client.database()`. A licence covers a database *family*, and you download one of its versions:
 
 ```zig
-const datasets = try client.database().list(.{});
-defer datasets.deinit();
-const id = datasets.value[0].versions[0].id; // e.g. vpn_ip_extended_v1
+const databases = try client.database().list(.{});
+defer databases.deinit();
+const id = databases.value[0].versions[0].id; // e.g. vpn_ip_extended_v1
 
 // A time-limited link, so something else can do the transfer.
 const url = try client.database().downloadUrl(id, .mmdb, .{});
