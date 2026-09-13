@@ -10,7 +10,7 @@ The library helps you query VPNDetection's APIs for anonymity detection includin
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/vpndetection-io/sdk-zig#v3.0.1
+zig fetch --save git+https://github.com/vpndetection-io/sdk-zig#v3.1.0
 ```
 
 Then add the module to whatever you are building, in `build.zig`:
@@ -72,6 +72,31 @@ std.debug.print("{}\n", .{result.value.is_vpn});                  // true
 std.debug.print("{s}\n", .{result.value.vpn.?.provider.?});       // mullvad
 std.debug.print("{}\n", .{result.value.is_hosting orelse false}); // true
 ```
+
+### Your own address
+
+```zig
+const result = try client.myIp();
+defer result.deinit();
+
+std.debug.print("{s}\n", .{result.value.ip});   // the address we saw this call come from
+```
+
+Same answer `lookup` would give for that address, and the same cost against your allowance. It is deliberately not cached: which address you are is the whole question, and a machine that moves between networks would otherwise be told where it used to be.
+
+### Your plan and usage
+
+```zig
+const acct = try client.myAccount();
+defer acct.deinit();
+
+std.debug.print("{s}\n", .{acct.value.plan.key});        // max
+std.debug.print("{d}\n", .{acct.value.usage.requests});  // 580
+```
+
+Usage counts against the anniversary of your subscription, not the calendar month and not the billing period, and it is the same number a lookup is gated on. `hard_limit` is `null` on an uncapped plan, which is not the same as zero.
+
+Both are yours to free, like everything else the client hands back. `myIpWith` and `myAccountWith` take this call's own retry budget and a `Diagnostics`.
 
 ### Batch lookup
 
