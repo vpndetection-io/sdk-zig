@@ -100,8 +100,16 @@ pub const Bogons = struct {
 };
 
 /// The caller owns the arena, and every slice in the corpus lives in it.
+///
+/// Unknown fields are ignored, which is not optional: the corpus is shared by
+/// every SDK and grows whenever any ONE of them needs a new case, so a strict
+/// parse here turns another language's addition into a build failure in this
+/// one. Zig is the only binding whose default is strict.
 pub fn load(gpa: Allocator) !std.json.Parsed(Corpus) {
-    return std.json.parseFromSlice(Corpus, gpa, source, .{ .allocate = .alloc_always });
+    return std.json.parseFromSlice(Corpus, gpa, source, .{
+        .allocate = .alloc_always,
+        .ignore_unknown_fields = true,
+    });
 }
 
 /// A fixture body as the stub has to serve it.
