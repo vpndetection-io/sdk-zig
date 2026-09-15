@@ -566,7 +566,7 @@ test "myEntitlement reports the plan and the usage" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
     defer harness.deinit();
-    try harness.stub.route("/api/v1/entitlement/me", .ok(entitlement_body));
+    try harness.stub.route("/api/v1/entitlement", .ok(entitlement_body));
 
     var client = try harness.client(.{});
     defer client.deinit();
@@ -588,7 +588,7 @@ test "myEntitlement is not cached" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
     defer harness.deinit();
-    try harness.stub.route("/api/v1/entitlement/me", .ok(entitlement_body));
+    try harness.stub.route("/api/v1/entitlement", .ok(entitlement_body));
 
     var client = try harness.client(.{});
     defer client.deinit();
@@ -606,7 +606,7 @@ test "myEntitlement surfaces an unauthorized key" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
     defer harness.deinit();
-    try harness.stub.route("/api/v1/entitlement/me", .{
+    try harness.stub.route("/api/v1/entitlement", .{
         .status = 401,
         .body = "{\"error\":\"invalid API key\"}",
     });

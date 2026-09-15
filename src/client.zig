@@ -257,7 +257,7 @@ pub const Client = struct {
         diag.reset();
 
         const body = try http.send(&self.transport, self.gpa, self.io, .{
-            .path = "/api/v1/entitlement/me",
+            .path = "/api/v1/entitlement",
             .retries = options.retries orelse self.retries,
             .diagnostics = diag,
         });
