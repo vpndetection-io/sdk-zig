@@ -88,10 +88,13 @@ pub const BatchCase = struct {
 };
 
 pub const BatchExpect = struct {
-    keys: []const []const u8,
+    keys: []const []const u8 = &.{},
     httpRequests: ?usize = null,
     bogonKeys: []const []const u8 = &.{},
     errorKeys: []const []const u8 = &.{},
+    keyCount: ?usize = null,
+    /// Address to the corpus's spelling of an error kind, as a JSON object.
+    errorKinds: ?std.json.Value = null,
 };
 
 pub const Bogons = struct {

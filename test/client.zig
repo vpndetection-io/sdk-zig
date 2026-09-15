@@ -10,12 +10,16 @@ const Harness = support.Harness;
 const Io = std.Io;
 const Route = support.Route;
 
-const many = 12;
+// Enough addresses for seven chunks of the batch endpoint's 1000, so a
+// concurrency bound has something to bound: one request per chunk, and only
+// the chunks overlap.
+const many = 6001;
+const chunks_of_many = 7;
 
 fn routeMany(harness: *Harness) !std.ArrayList([]const u8) {
     var ips: std.ArrayList([]const u8) = .empty;
-    for (1..many + 1) |i| {
-        const ip = try harness.stub.printed("9.9.9.{d}", .{i});
+    for (0..many) |i| {
+        const ip = try harness.stub.printed("9.{d}.{d}.{d}", .{ 1 + i / 65536, (i / 256) % 256, i % 256 });
         try harness.stub.routeLookup(ip);
         try ips.append(harness.stub.arena.allocator(), ip);
     }
@@ -36,7 +40,7 @@ test "batch concurrency is configurable per call" {
     var batch = try client.lookupBatch(ips.items, .{ .concurrency = 3 });
     defer batch.deinit();
 
-    try std.testing.expectEqual(many, harness.stub.callCount());
+    try std.testing.expectEqual(chunks_of_many, harness.stub.callCount());
     try std.testing.expect(harness.stub.peak() <= 3);
     try std.testing.expect(harness.stub.peak() > 1);
 }
@@ -325,7 +329,8 @@ test "an unknown dataset is not retried" {
 
 // The corpus's dedup case runs with the cache on, where a repeated address
 // costs nothing either way. With the cache off, deduping is the only thing
-// standing between one address and two requests.
+// keeping a repeated address out of the chunk: five inputs are two entries
+// in one request.
 test "a batch dedupes even with the cache disabled" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
@@ -340,7 +345,7 @@ test "a batch dedupes even with the cache disabled" {
     defer batch.deinit();
 
     try std.testing.expectEqual(2, batch.count());
-    try std.testing.expectEqual(2, harness.stub.callCount());
+    try std.testing.expectEqual(1, harness.stub.callCount());
 }
 
 test "a batch keeps its own copy of the addresses it was given" {

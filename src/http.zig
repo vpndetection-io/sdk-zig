@@ -14,8 +14,11 @@ const retry_max_delay: Io.Duration = .fromSeconds(30);
 pub const Request = struct {
     /// Whether the answer is the body or the `Location` of a redirect.
     kind: enum { json, location } = .json,
+    method: std.http.Method = .GET,
     path: []const u8,
     query: []const Transport.Param = &.{},
+    /// The JSON body of a POST; empty for a GET.
+    body: []const u8 = "",
     retries: u32,
     diagnostics: *Diagnostics,
 };
@@ -30,7 +33,10 @@ pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) Cal
     while (true) {
         diag.reset();
         const attempt = switch (request.kind) {
-            .json => transport.getJson(gpa, request.path, request.query, diag),
+            .json => if (request.method == .POST)
+                transport.postJson(gpa, request.path, request.body, diag)
+            else
+                transport.getJson(gpa, request.path, request.query, diag),
             .location => transport.getLocation(gpa, request.path, request.query, diag),
         };
         if (attempt) |body| {
@@ -50,7 +56,7 @@ pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) Cal
     }
 }
 
-/// Every request the library makes: six GET operations with no request bodies,
+/// Every request the library makes: six GET operations and the batch POST,
 /// which is the whole API.
 pub const Transport = struct {
     http: std.http.Client,
@@ -85,13 +91,39 @@ pub const Transport = struct {
         var request = try self.open(url, diag);
         defer request.deinit();
         var response = request.receiveHead(&.{}) catch |err| return fail(diag, err);
+        return readJson(&response, gpa, diag);
+    }
 
+    /// The body of a 2xx JSON response to a POST carrying `body`, owned by
+    /// `gpa`. The one request with a body: the batch.
+    pub fn postJson(
+        self: *Transport,
+        gpa: Allocator,
+        path: []const u8,
+        body: []const u8,
+        diag: *Diagnostics,
+    ) CallError![]u8 {
+        const url = try self.buildUrl(gpa, path, &.{});
+        defer gpa.free(url);
+        // `sendBodyComplete` takes the bytes as mutable, so the body is copied.
+        const payload = try gpa.dupe(u8, body);
+        defer gpa.free(payload);
+
+        var request = try self.openPost(url, diag);
+        defer request.deinit();
+        request.sendBodyComplete(payload) catch |err| return fail(diag, err);
+        var response = request.receiveHead(&.{}) catch |err| return fail(diag, err);
+        return readJson(&response, gpa, diag);
+    }
+
+    /// A 2xx body, or the failure a non-2xx describes.
+    fn readJson(response: *std.http.Client.Response, gpa: Allocator, diag: *Diagnostics) CallError![]u8 {
         const status = @intFromEnum(response.head.status);
         diag.status = status;
         const retry_after = readRetryAfter(response.head);
         diag.retry_after_s = retry_after.seconds;
 
-        const body = try readBody(&response, gpa, diag);
+        const body = try readBody(response, gpa, diag);
         if (status < 200 or status >= 300) {
             defer gpa.free(body);
             if (errors.envelopeMessage(gpa, body)) |message| {
@@ -153,6 +185,24 @@ pub const Transport = struct {
         const authorization: std.http.Client.Request.Headers.Value =
             if (self.authorization) |value| .{ .override = value } else .omit;
         return self.openWith(url, authorization, .default, diag);
+    }
+
+    /// A POST with a JSON body, opened but not yet sent: the caller hands the
+    /// body to `sendBodyComplete`, which writes head and body together.
+    fn openPost(self: *Transport, url: []const u8, diag: *Diagnostics) CallError!std.http.Client.Request {
+        const uri = std.Uri.parse(url) catch |err| return fail(diag, err);
+        const authorization: std.http.Client.Request.Headers.Value =
+            if (self.authorization) |value| .{ .override = value } else .omit;
+        var request = self.http.request(.POST, uri, .{
+            .redirect_behavior = .unhandled,
+            .headers = .{
+                .authorization = authorization,
+                .user_agent = .{ .override = user_agent },
+                .content_type = .{ .override = "application/json" },
+            },
+        }) catch |err| return fail(diag, err);
+        errdefer request.deinit();
+        return request;
     }
 
     /// Which content encodings the answer may arrive in. A dataset transfer

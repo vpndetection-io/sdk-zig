@@ -19,6 +19,10 @@ const Parsed = std.json.Parsed;
 /// The production API. Override it with `Options.base_url`.
 pub const default_base_url = "https://api.vpndetection.io";
 
+/// The most addresses `POST /batch` takes in one call; a larger batch is sent
+/// in chunks of this size.
+const batch_max: usize = 1000;
+
 pub const CacheOptions = struct {
     /// Maximum number of addresses held.
     max_entries: usize = 10_000,
@@ -33,7 +37,7 @@ pub const Options = struct {
     base_url: []const u8 = default_base_url,
     /// Null disables caching, so every lookup of a non-bogon address is served.
     cache: ?CacheOptions = .{},
-    /// Concurrent in-flight requests during a batch.
+    /// Concurrent batch requests - chunks of up to 1000 addresses - during a batch.
     concurrency: usize = 8,
     /// Further attempts a transient failure gets.
     retries: u32 = 2,
@@ -55,8 +59,8 @@ pub const CallOptions = struct {
 /// single lookup does not compile rather than being accepted and ignored.
 pub const BatchOptions = struct {
     retries: ?u32 = null,
-    /// In-flight requests for THIS batch only, so one large batch does not need
-    /// a second client to widen it.
+    /// Batch requests - chunks of up to 1000 addresses - in flight for THIS
+    /// batch only, so one large batch does not need a second client to widen it.
     concurrency: ?usize = null,
 };
 
@@ -281,14 +285,18 @@ pub const Client = struct {
         return .{ .arena = parsed, .value = value };
     }
 
-    /// Classifies many addresses concurrently. The caller owns the batch and
-    /// must `deinit` it, which frees every answer inside it.
+    /// Classifies many addresses in as few requests as possible. The caller
+    /// owns the batch and must `deinit` it.
     ///
-    /// The answers are keyed by address rather than positional, so duplicates in
-    /// the input collapse to a single request and the caller never has to line
-    /// two lists up. Keys are in the order the addresses were first seen. An
-    /// address that fails carries its error as its value, so one bad entry
-    /// cannot lose the rest of the answers.
+    /// Bogons are answered locally and cached answers are reused; everything
+    /// else goes to `POST /batch` in chunks of up to 1000 addresses, with at
+    /// most `concurrency` chunks in flight. Keyed by address rather than
+    /// positional, so duplicates in the input collapse to a single entry and the
+    /// caller never has to line two lists up. Keys are in the order the
+    /// addresses were first seen. An address that fails carries its error as its
+    /// value, so one bad entry cannot lose the rest of the answers: the API
+    /// reports a per-entry failure with the status the single lookup would have
+    /// answered, and a chunk that fails as a whole marks every address in it.
     pub fn lookupBatch(
         self: *Client,
         ips: []const []const u8,
@@ -296,28 +304,52 @@ pub const Client = struct {
     ) Allocator.Error!Batch {
         var batch: Batch = .{ .gpa = self.gpa };
         errdefer batch.deinit();
+        // The indexes of the entries that go to the API; a bogon or a cached
+        // answer is filled in here and never sent.
+        var pending: std.ArrayList(usize) = .empty;
+        defer pending.deinit(self.gpa);
         for (ips) |ip| {
             if (batch.entries.contains(ip)) {
                 continue;
             }
             const key = try self.gpa.dupe(u8, ip);
-            errdefer self.gpa.free(key);
-            try batch.entries.put(self.gpa, key, .{ .failed = .{ .err = error.Network } });
+            {
+                errdefer self.gpa.free(key);
+                try batch.entries.put(self.gpa, key, .{ .failed = .{ .err = error.Network } });
+            }
+            const index = batch.entries.count() - 1;
+            if (bogon.isBogon(key)) {
+                batch.entries.values()[index] = .{ .ok = try lookup_mod.bogonLookup(self.gpa, key) };
+                continue;
+            }
+            if (self.cache) |*cache| {
+                if (try cache.get(self.io, key, self.gpa)) |cached| {
+                    defer self.gpa.free(cached);
+                    var diag: Diagnostics = .{};
+                    batch.entries.values()[index] = if (self.parse(cached, &diag)) |answer|
+                        .{ .ok = answer }
+                    else |err|
+                        .{ .failed = .{ .err = err, .diagnostics = diag } };
+                    continue;
+                }
+            }
+            try pending.append(self.gpa, index);
+        }
+        if (pending.items.len == 0) {
+            return batch;
         }
 
         var work: Work = .{
             .client = self,
-            .ips = batch.entries.keys(),
+            .keys = batch.entries.keys(),
             .entries = batch.entries.values(),
-            .next = .init(0),
+            .pending = pending.items,
+            .next_chunk = .init(0),
             .retries = options.retries,
         };
-        if (work.ips.len == 0) {
-            return batch;
-        }
-
+        const chunk_count = (pending.items.len + batch_max - 1) / batch_max;
         const limit = @max(1, options.concurrency orelse self.concurrency);
-        const workers = @min(limit, work.ips.len);
+        const workers = @min(limit, chunk_count);
         const helpers = try self.gpa.alloc(Io.Future(void), workers - 1);
         defer self.gpa.free(helpers);
 
@@ -333,6 +365,89 @@ pub const Client = struct {
             _ = helper.await(self.io);
         }
         return batch;
+    }
+
+    /// One `POST /batch`, mapped back onto the addresses it was asked about. A
+    /// chunk-level failure - the call refused, the transport failing, the
+    /// retries exhausted - becomes every address's error, exactly as it would
+    /// have been had each been looked up alone.
+    fn lookupChunk(self: *Client, work: *Work, indexes: []const usize) void {
+        var diag: Diagnostics = .{};
+        self.postChunk(work, indexes, &diag) catch |err| {
+            for (indexes) |index| {
+                work.entries[index] = .{ .failed = .{ .err = err, .diagnostics = diag } };
+            }
+        };
+    }
+
+    fn postChunk(self: *Client, work: *Work, indexes: []const usize, diag: *Diagnostics) CallError!void {
+        var addresses: std.ArrayList([]const u8) = .empty;
+        defer addresses.deinit(self.gpa);
+        for (indexes) |index| {
+            try addresses.append(self.gpa, work.keys[index]);
+        }
+        const request_body = try std.json.Stringify.valueAlloc(self.gpa, .{ .ips = addresses.items }, .{});
+        defer self.gpa.free(request_body);
+
+        const body = try http.send(&self.transport, self.gpa, self.io, .{
+            .method = .POST,
+            .path = "/batch",
+            .body = request_body,
+            .retries = work.retries orelse self.retries,
+            .diagnostics = diag,
+        });
+        defer self.gpa.free(body);
+
+        var parsed = std.json.parseFromSlice(std.json.Value, self.gpa, body, .{}) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                diag.setMessage("the answer was not a batch response");
+                return error.ServerError;
+            },
+        };
+        defer parsed.deinit();
+        const results = member(parsed.value, "results");
+        const failures = member(parsed.value, "errors");
+        for (indexes) |index| {
+            work.entries[index] = try self.entryFor(work.keys[index], results, failures);
+        }
+    }
+
+    /// One address's entry from the two maps of a batch answer. A served answer
+    /// is re-encoded on its own, so the entry's `raw` and the cache hold exactly
+    /// what a single lookup would have.
+    fn entryFor(
+        self: *Client,
+        ip: []const u8,
+        results: ?std.json.ObjectMap,
+        failures: ?std.json.ObjectMap,
+    ) Allocator.Error!Batch.Entry {
+        if (results) |served| {
+            if (served.get(ip)) |value| {
+                const encoded = try std.json.Stringify.valueAlloc(self.gpa, value, .{});
+                defer self.gpa.free(encoded);
+                var diag: Diagnostics = .{};
+                const answer = self.parse(encoded, &diag) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return .{ .failed = .{ .err = err, .diagnostics = diag } },
+                };
+                if (self.cache) |*cache| {
+                    cache.put(self.io, ip, encoded);
+                }
+                return .{ .ok = answer };
+            }
+        }
+        if (failures) |failed| {
+            if (failed.get(ip)) |value| {
+                return .{ .failed = entryFailure(value) };
+            }
+        }
+        var failure: Batch.Failure = .{ .err = error.ServerError };
+        failure.diagnostics.status = 200;
+        var text: [Diagnostics.max_message_len]u8 = undefined;
+        const message = std.fmt.bufPrint(&text, "the batch answer did not include {s}", .{ip}) catch &text;
+        failure.diagnostics.setMessage(message);
+        return .{ .failed = failure };
     }
 
     /// The licensed dataset downloads, for keys carrying the `db.download`
@@ -404,29 +519,60 @@ pub const Batch = struct {
 
 const Work = struct {
     client: *Client,
-    ips: []const []const u8,
+    keys: []const []const u8,
     entries: []Batch.Entry,
-    next: std.atomic.Value(usize),
+    /// The indexes of the entries still to be answered, chunked by position.
+    pending: []const usize,
+    next_chunk: std.atomic.Value(usize),
     retries: ?u32,
 };
 
-/// Each worker takes the next address until there are none left, so in-flight
-/// requests never exceed the worker count and a slow address cannot leave a
+/// Each worker takes the next chunk until there are none left, so in-flight
+/// requests never exceed the worker count and a slow chunk cannot leave a
 /// worker idle. Every entry is written by exactly one worker, at its own index.
 fn runWorker(work: *Work) void {
     while (true) {
-        const index = work.next.fetchAdd(1, .monotonic);
-        if (index >= work.ips.len) {
+        const chunk = work.next_chunk.fetchAdd(1, .monotonic);
+        const from = chunk * batch_max;
+        if (from >= work.pending.len) {
             return;
         }
-        var diagnostics: Diagnostics = .{};
-        const answer = work.client.lookupWith(work.ips[index], .{
-            .retries = work.retries,
-            .diagnostics = &diagnostics,
-        });
-        work.entries[index] = if (answer) |value|
-            .{ .ok = value }
-        else |err|
-            .{ .failed = .{ .err = err, .diagnostics = diagnostics } };
+        const to = @min(from + batch_max, work.pending.len);
+        work.client.lookupChunk(work, work.pending[from..to]);
     }
+}
+
+/// A member of a JSON object that is itself an object, or null.
+fn member(value: std.json.Value, name: []const u8) ?std.json.ObjectMap {
+    if (value != .object) {
+        return null;
+    }
+    const found = value.object.get(name) orelse return null;
+    return if (found == .object) found.object else null;
+}
+
+/// A per-entry failure inside a successful batch: the status the single lookup
+/// would have answered, and its message, with no headers at all - so a 429 here
+/// is a spent allowance, which is the only kind the API puts in an entry.
+fn entryFailure(value: std.json.Value) Batch.Failure {
+    var failure: Batch.Failure = .{ .err = error.ServerError };
+    failure.diagnostics.status = 200;
+    if (value != .object) {
+        failure.diagnostics.setMessage("the entry was not an object");
+        return failure;
+    }
+    var status: u16 = 500;
+    if (value.object.get("status")) |given| {
+        if (given == .integer) {
+            status = std.math.cast(u16, given.integer) orelse 500;
+        }
+    }
+    failure.err = errors.classify(status, false);
+    failure.diagnostics.status = status;
+    if (value.object.get("error")) |message| {
+        if (message == .string) {
+            failure.diagnostics.setMessage(message.string);
+        }
+    }
+    return failure;
 }

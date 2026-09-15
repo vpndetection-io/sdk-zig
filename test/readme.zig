@@ -44,7 +44,7 @@ fn examples(gpa: std.mem.Allocator) !void {
         }
     }
 
-    var wider = try client.lookupBatch(&.{"1.1.1.1"}, .{ .concurrency = 32, .retries = 4 });
+    var wider = try client.lookupBatch(&.{"1.1.1.1"}, .{ .concurrency = 4, .retries = 4 });
     defer wider.deinit();
 
     var sized = try vpndetection.Client.init(gpa, threaded.io(), .{

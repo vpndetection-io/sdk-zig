@@ -189,6 +189,14 @@ fn serve(self: *Stub, stream: Io.net.Stream) void {
     var head_buffer: [8192]u8 = undefined;
     const head = readHead(&reader.interface, &head_buffer) catch return;
     const target = requestTarget(head) orelse return;
+    // A POST carries its body after the blank line, sized by Content-Length.
+    const length = if (headerValue(head, "content-length")) |value|
+        std.fmt.parseInt(usize, value, 10) catch 0
+    else
+        0;
+    const body = self.gpa.alloc(u8, length) catch return;
+    defer self.gpa.free(body);
+    reader.interface.readSliceAll(body) catch return;
 
     var decoded_buffer: [256]u8 = undefined;
     const path = percentDecode(target, &decoded_buffer);
@@ -207,10 +215,16 @@ fn serve(self: *Stub, stream: Io.net.Stream) void {
 
     // An unrouted address gets what the real API gives one, so a test that
     // forgets a route fails as a bad request rather than as a hang.
-    const answer = found orelse Route{
-        .status = 400,
-        .body = "{\"error\":\"not a valid IP address\"}",
-    };
+    const answer = if (std.mem.eql(u8, path, "/batch"))
+        (if (batchAnswer(self, body)) |text| Route.ok(text) else |_| Route{
+            .status = 500,
+            .body = "{\"error\":\"the stub could not build the batch answer\"}",
+        })
+    else
+        found orelse Route{
+            .status = 400,
+            .body = "{\"error\":\"not a valid IP address\"}",
+        };
     writeResponse(self.io, stream, answer) catch {};
 }
 
@@ -233,6 +247,68 @@ fn record(self: *Stub, path: []const u8, head: []const u8) ?Route {
     }) catch {};
     self.user_agent = ownedHeader(self, head, "user-agent");
     return self.routes.get(path);
+}
+
+/// A POST /batch is answered the way the API answers one: every address the
+/// table knows is a result if its route is a 200 and an entry error otherwise,
+/// and an unknown address is the 400 the API gives a string that is not one.
+/// One call however many addresses, which is what the request counts measure.
+fn batchAnswer(self: *Stub, body: []const u8) ![]const u8 {
+    var parsed = try std.json.parseFromSlice(struct { ips: []const []const u8 }, self.gpa, body, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+
+    var results: std.ArrayList(u8) = .empty;
+    defer results.deinit(self.gpa);
+    var failures: std.ArrayList(u8) = .empty;
+    defer failures.deinit(self.gpa);
+    var path_buffer: [256]u8 = undefined;
+
+    self.mutex.lockUncancelable(self.io);
+    defer self.mutex.unlock(self.io);
+    for (parsed.value.ips) |ip| {
+        const path = std.fmt.bufPrint(&path_buffer, "/{s}", .{ip}) catch continue;
+        const route = self.routes.get(path);
+        if (route != null and route.?.status == 200) {
+            if (results.items.len > 0) {
+                try results.append(self.gpa, ',');
+            }
+            try results.print(self.gpa, "\"{s}\":{s}", .{ ip, route.?.body });
+            continue;
+        }
+        if (failures.items.len > 0) {
+            try failures.append(self.gpa, ',');
+        }
+        if (route) |failed| {
+            const message = try jsonMessage(self.gpa, failed.body);
+            defer self.gpa.free(message);
+            try failures.print(self.gpa, "\"{s}\":{{\"status\":{d},\"error\":{s}}}", .{ ip, failed.status, message });
+        } else {
+            try failures.print(self.gpa, "\"{s}\":{{\"status\":400,\"error\":\"not a valid IP address\"}}", .{ip});
+        }
+    }
+    return try std.fmt.allocPrint(self.arena.allocator(), "{{\"results\":{{{s}}},\"errors\":{{{s}}}}}", .{
+        results.items,
+        failures.items,
+    });
+}
+
+/// The `error` member of a route's JSON body, as a JSON string literal.
+fn jsonMessage(gpa: Allocator, body: []const u8) ![]u8 {
+    var parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch {
+        return try std.json.Stringify.valueAlloc(gpa, "request failed", .{});
+    };
+    defer parsed.deinit();
+    var message: []const u8 = "request failed";
+    if (parsed.value == .object) {
+        if (parsed.value.object.get("error")) |found| {
+            if (found == .string) {
+                message = found.string;
+            }
+        }
+    }
+    return try std.json.Stringify.valueAlloc(gpa, message, .{});
 }
 
 fn ownedHeader(self: *Stub, head: []const u8, name: []const u8) []const u8 {

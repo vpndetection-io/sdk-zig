@@ -100,7 +100,7 @@ Both are yours to free, like everything else the client hands back. `myIpWith` a
 
 ### Batch lookup
 
-You can do batch lookups with a list, which parallelizes requests for you efficiently:
+Look up many addresses at once. Bogons and cached answers are handled locally, and everything else goes to the batch endpoint in chunks of up to 1000 addresses, in parallel:
 
 ```zig
 var batch = try client.lookupBatch(&.{ "45.83.91.1", "8.8.8.8", "1.1.1.1" }, .{});
@@ -114,12 +114,12 @@ for (batch.keys(), batch.values()) |ip, entry| {
 }
 ```
 
-Results are keyed by address, so duplicates in your list collapse into a single request and one address failing never loses the rest. Keys stay in the order the addresses were first seen.
+Results are keyed by address, in the order you first listed each one, so duplicates in your list collapse into a single entry and one address failing never loses the rest: it carries its error as its value, with the status the API would have given that address on its own.
 
-Concurrency and other variables are configurable per-call:
+How many chunks are in flight at once, and how many times a failed chunk is retried, are configurable per call:
 
 ```zig
-var batch = try client.lookupBatch(many_ips, .{ .concurrency = 32, .retries = 4 });
+var batch = try client.lookupBatch(many_ips, .{ .concurrency = 4, .retries = 4 });
 defer batch.deinit();
 ```
 

@@ -196,7 +196,8 @@ test "one bad address does not lose the rest of the batch" {
     }
     for (case.expect.errorKeys) |ip| {
         const failure = batch.get(ip).?.failed;
-        try std.testing.expectEqual(error.BadRequest, failure.err);
+        const want = case.expect.errorKinds.?.object.get(ip).?.string;
+        try std.testing.expectEqualStrings(want, vpndetection.kindName(failure.err));
         try std.testing.expectEqualStrings("not a valid IP address", failure.diagnostics.message());
     }
     try std.testing.expect(!batch.get("1.1.1.1").?.ok.value.is_vpn);
@@ -217,6 +218,64 @@ test "a cache hit issues no second request" {
     for (0..case.repeat orelse 1) |_| {
         var batch = try client.lookupBatch(case.input, .{});
         batch.deinit();
+    }
+    try std.testing.expectEqual(case.expect.httpRequests.?, harness.stub.callCount());
+}
+
+test "a large batch is sent in chunks of a thousand" {
+    const gpa = std.testing.allocator;
+    const data = try corpus.load(gpa);
+    defer data.deinit();
+    const case = data.value.batchCase("chunks-of-one-thousand");
+
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    for (case.input) |ip| {
+        try harness.stub.routeLookup(ip);
+    }
+
+    var client = try harness.client(.{ .cache = null });
+    defer client.deinit();
+    var batch = try client.lookupBatch(case.input, .{});
+    defer batch.deinit();
+
+    try std.testing.expectEqual(case.expect.keyCount.?, batch.count());
+    try std.testing.expectEqual(case.expect.httpRequests.?, harness.stub.callCount());
+    for (case.input) |ip| {
+        try std.testing.expectEqualStrings(ip, batch.get(ip).?.ok.value.ip);
+    }
+}
+
+// A per-entry failure carries no headers, so its 429 can only be a spent
+// allowance, and a 500 is the server's; neither is retried per entry, because
+// retries belong to the call and the call succeeded.
+test "an entry error is classified by its status" {
+    const gpa = std.testing.allocator;
+    const data = try corpus.load(gpa);
+    defer data.deinit();
+    const case = data.value.batchCase("an-entry-error-is-classified-by-its-status");
+
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.routeLookup("1.1.1.1");
+    try harness.stub.route("/8.8.8.8", .{
+        .status = 429,
+        .body = "{\"error\":\"request allowance exceeded; raise or remove your overage limit\"}",
+    });
+    try harness.stub.route("/9.9.9.9", .{ .status = 500, .body = "{\"error\":\"lookup failed\"}" });
+
+    var client = try harness.client(.{ .retries = 3 });
+    defer client.deinit();
+    var batch = try client.lookupBatch(case.input, .{});
+    defer batch.deinit();
+
+    for (case.expect.keys, batch.keys()) |want, got| {
+        try std.testing.expectEqualStrings(want, got);
+    }
+    var kinds = case.expect.errorKinds.?.object.iterator();
+    while (kinds.next()) |entry| {
+        const failure = batch.get(entry.key_ptr.*).?.failed;
+        try std.testing.expectEqualStrings(entry.value_ptr.string, vpndetection.kindName(failure.err));
     }
     try std.testing.expectEqual(case.expect.httpRequests.?, harness.stub.callCount());
 }
