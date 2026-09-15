@@ -51,6 +51,7 @@ function main() {
         fi
         newest="$(printf '%s\n' "$versions" | sort -V | tail -1)"
         echo "==> ${REPO_URL} publishes ${versions//$'\n'/, } within [${RANGE_LOW}, ${RANGE_HIGH})"
+        assertRangeAdmitsLatest "$versions"
     fi
 
     reportTiers
@@ -96,6 +97,23 @@ function inRange() {
     lowest="$(printf '%s\n%s\n' "$tag" "$RANGE_LOW" | sort -V | head -1)"
     highest="$(printf '%s\n%s\n' "$tag" "$RANGE_HIGH" | sort -V | head -1)"
     [ "$lowest" = "$RANGE_LOW" ] && [ "$highest" = "$tag" ] && [ "$tag" != "$RANGE_HIGH" ]
+}
+
+# The range has to admit the NEWEST tag, not merely some tag. A stale range still
+# matches the last release inside it, so the skip above never fires and the
+# suite exercises a client from a major behind, reporting whatever the API has
+# changed since as a broken API - eleven of twelve suites sat like that on
+# 2026-09-13. An EMPTY match is the skip; this is the failure.
+function assertRangeAdmitsLatest() {
+    local versions="$1" latest
+    latest="$(git ls-remote --tags --refs "$REPO_URL" 2>/dev/null \
+        | sed -n 's#.*refs/tags/v\{0,1\}\([0-9]\+\.[0-9]\+\.[0-9]\+\)$#\1#p' | sort -V | tail -1)"
+    if ! printf '%s\n' "$versions" | grep -qx "$latest" ; then
+        echo "FAILED: [${RANGE_LOW}, ${RANGE_HIGH}) does not admit the newest published ${latest}," \
+            "so the suite would test $(printf '%s\n' "$versions" | sort -V | tail -1) instead." \
+            "Bump RANGE_LOW/RANGE_HIGH." >&2
+        exit 1
+    fi
 }
 
 # The suite is worthless if the build handed it the working tree, and that
