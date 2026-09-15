@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const account_mod = @import("account.zig");
+const entitlement_mod = @import("entitlement.zig");
 const bogon = @import("bogon.zig");
 const cache_mod = @import("cache.zig");
 const database_mod = @import("database.zig");
@@ -12,7 +12,7 @@ const Allocator = std.mem.Allocator;
 const CallError = errors.CallError;
 const Diagnostics = errors.Diagnostics;
 const Io = std.Io;
-const Account = account_mod.Account;
+const Entitlement = entitlement_mod.Entitlement;
 const Lookup = lookup_mod.Lookup;
 const Parsed = std.json.Parsed;
 
@@ -233,7 +233,7 @@ pub const Client = struct {
     ///
     /// Named for what it answers rather than `me`, which sits one letter from
     /// `myIp` and means something quite different: one is which address you are
-    /// calling FROM, the other is which account you are calling AS.
+    /// calling FROM, the other is what the key you are calling WITH may spend.
     ///
     /// Unlike a lookup there is no useful unauthenticated answer, so a client
     /// built without an API key gets `error.Unauthorized` rather than a partial
@@ -245,19 +245,19 @@ pub const Client = struct {
     ///
     /// Deliberately NOT cached: the whole point is what has been spent, and a
     /// cached answer is a wrong one within seconds of the next request.
-    pub fn myAccount(self: *Client) CallError!Parsed(Account) {
-        return self.myAccountWith(.{});
+    pub fn myEntitlement(self: *Client) CallError!Parsed(Entitlement) {
+        return self.myEntitlementWith(.{});
     }
 
-    /// `myAccount`, with this call's own retry budget and somewhere to put the
-    /// detail behind a failure.
-    pub fn myAccountWith(self: *Client, options: CallOptions) CallError!Parsed(Account) {
+    /// `myEntitlement`, with this call's own retry budget and somewhere to put
+    /// the detail behind a failure.
+    pub fn myEntitlementWith(self: *Client, options: CallOptions) CallError!Parsed(Entitlement) {
         var scratch: Diagnostics = .{};
         const diag = options.diagnostics orelse &scratch;
         diag.reset();
 
         const body = try http.send(&self.transport, self.gpa, self.io, .{
-            .path = "/api/v1/account/me",
+            .path = "/api/v1/entitlement/me",
             .retries = options.retries orelse self.retries,
             .diagnostics = diag,
         });
@@ -272,7 +272,7 @@ pub const Client = struct {
         // Parsed from a copy the arena owns, so every string in the answer
         // outlives the body this call frees.
         const owned = try arena.dupe(u8, body);
-        const value = std.json.parseFromSliceLeaky(Account, arena, owned, .{
+        const value = std.json.parseFromSliceLeaky(Entitlement, arena, owned, .{
             .ignore_unknown_fields = true,
         }) catch {
             diag.setMessage("the answer did not match the documented shape");

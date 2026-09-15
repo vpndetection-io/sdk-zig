@@ -87,7 +87,7 @@ Same answer `lookup` would give for that address, and the same cost against your
 ### Your plan and usage
 
 ```zig
-const acct = try client.myAccount();
+const acct = try client.myEntitlement();
 defer acct.deinit();
 
 std.debug.print("{s}\n", .{acct.value.plan.key});        // max
@@ -96,7 +96,7 @@ std.debug.print("{d}\n", .{acct.value.usage.requests});  // 580
 
 Usage counts against the anniversary of your subscription, not the calendar month and not the billing period, and it is the same number a lookup is gated on. `hard_limit` is `null` on an uncapped plan, which is not the same as zero.
 
-Both are yours to free, like everything else the client hands back. `myIpWith` and `myAccountWith` take this call's own retry budget and a `Diagnostics`.
+Both are yours to free, like everything else the client hands back. `myIpWith` and `myEntitlementWith` take this call's own retry budget and a `Diagnostics`.
 
 ### Batch lookup
 

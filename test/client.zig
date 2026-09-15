@@ -508,7 +508,7 @@ test "a dataset the organization does not license is refused once" {
     try std.testing.expect(!scratch.exists("data.csv.gz.part"));
 }
 
-const account_body =
+const entitlement_body =
     \\{
     \\  "org_id": "85bb51e4-2eb6-4a31-8e4d-02ba8b98fe61",
     \\  "apikey": {
@@ -562,51 +562,51 @@ test "myIp is not cached" {
     try std.testing.expectEqual(@as(usize, 2), harness.stub.callCount());
 }
 
-test "myAccount reports the plan and the usage" {
+test "myEntitlement reports the plan and the usage" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
     defer harness.deinit();
-    try harness.stub.route("/api/v1/account/me", .ok(account_body));
+    try harness.stub.route("/api/v1/entitlement/me", .ok(entitlement_body));
 
     var client = try harness.client(.{});
     defer client.deinit();
 
-    const account = try client.myAccount();
-    defer account.deinit();
+    const entitlement = try client.myEntitlement();
+    defer entitlement.deinit();
 
-    try std.testing.expectEqualStrings("max", account.value.plan.key);
-    try std.testing.expectEqualStrings("max", account.value.plan.tier);
-    try std.testing.expectEqual(@as(i64, 580), account.value.usage.requests);
-    try std.testing.expectEqual(@as(i64, 5_000_000), account.value.usage.quota);
+    try std.testing.expectEqualStrings("max", entitlement.value.plan.key);
+    try std.testing.expectEqualStrings("max", entitlement.value.plan.tier);
+    try std.testing.expectEqual(@as(i64, 580), entitlement.value.usage.requests);
+    try std.testing.expectEqual(@as(i64, 5_000_000), entitlement.value.usage.quota);
     // Null means NEVER stop, which is not the same as a limit of zero.
-    try std.testing.expectEqual(@as(?i64, null), account.value.usage.hard_limit);
-    try std.testing.expectEqual(@as(usize, 0), account.value.apikey.allowed_cidrs.len);
+    try std.testing.expectEqual(@as(?i64, null), entitlement.value.usage.hard_limit);
+    try std.testing.expectEqual(@as(usize, 0), entitlement.value.apikey.allowed_cidrs.len);
 }
 
 // The whole point is what has been spent.
-test "myAccount is not cached" {
+test "myEntitlement is not cached" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
     defer harness.deinit();
-    try harness.stub.route("/api/v1/account/me", .ok(account_body));
+    try harness.stub.route("/api/v1/entitlement/me", .ok(entitlement_body));
 
     var client = try harness.client(.{});
     defer client.deinit();
 
-    const first = try client.myAccount();
+    const first = try client.myEntitlement();
     first.deinit();
-    const second = try client.myAccount();
+    const second = try client.myEntitlement();
     second.deinit();
 
     try std.testing.expectEqual(@as(usize, 2), harness.stub.callCount());
 }
 
 // Unlike a lookup there is no useful unauthenticated answer.
-test "myAccount surfaces an unauthorized key" {
+test "myEntitlement surfaces an unauthorized key" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
     defer harness.deinit();
-    try harness.stub.route("/api/v1/account/me", .{
+    try harness.stub.route("/api/v1/entitlement/me", .{
         .status = 401,
         .body = "{\"error\":\"invalid API key\"}",
     });
@@ -614,5 +614,5 @@ test "myAccount surfaces an unauthorized key" {
     var client = try harness.client(.{ .retries = 0 });
     defer client.deinit();
 
-    try std.testing.expectError(error.Unauthorized, client.myAccount());
+    try std.testing.expectError(error.Unauthorized, client.myEntitlement());
 }

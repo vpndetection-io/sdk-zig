@@ -1,21 +1,21 @@
 const std = @import("std");
 
-/// Mirrors `components.schemas.AccountMe` in spec/openapi.yaml.
+/// Mirrors `components.schemas.Entitlement` in spec/openapi.yaml.
 ///
 /// What an API key is entitled to, and what it has spent. Everything here
 /// describes the key that asked: there is no way to enquire about another
 /// organization, because the credential IS the question.
-pub const Account = struct {
+pub const Entitlement = struct {
     /// The organization the key belongs to.
     org_id: []const u8,
-    apikey: AccountApikey,
-    plan: AccountPlan,
-    usage: AccountUsage,
+    apikey: EntitlementApikey,
+    plan: EntitlementPlan,
+    usage: EntitlementUsage,
 };
 
 /// The credential itself. The key is never echoed back - only its id, which is
 /// what the console shows and what you can act on.
-pub const AccountApikey = struct {
+pub const EntitlementApikey = struct {
     id: []const u8,
     /// Null for a key with no end date, which is the normal case.
     expires: ?[]const u8,
@@ -29,7 +29,7 @@ pub const AccountApikey = struct {
 /// `tier` stays a string rather than a Zig enum, for the same reason
 /// `Database.license_type` does: a tier added to the API after this release
 /// would otherwise fail the whole response to parse.
-pub const AccountPlan = struct {
+pub const EntitlementPlan = struct {
     /// The plan the organization is on, e.g. `max`.
     key: []const u8,
     /// The field tier, which decides how much of a lookup answer comes back:
@@ -38,7 +38,7 @@ pub const AccountPlan = struct {
 };
 
 /// Consumption against the plan's allowance, in the current window.
-pub const AccountUsage = struct {
+pub const EntitlementUsage = struct {
     /// Requests counted in the current window. The same number a lookup is
     /// gated on, and it can lag by a few seconds.
     requests: i64,

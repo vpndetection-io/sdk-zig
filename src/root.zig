@@ -37,10 +37,10 @@
 
 const std = @import("std");
 
-pub const Account = @import("account.zig").Account;
-pub const AccountApikey = @import("account.zig").AccountApikey;
-pub const AccountPlan = @import("account.zig").AccountPlan;
-pub const AccountUsage = @import("account.zig").AccountUsage;
+pub const Entitlement = @import("entitlement.zig").Entitlement;
+pub const EntitlementApikey = @import("entitlement.zig").EntitlementApikey;
+pub const EntitlementPlan = @import("entitlement.zig").EntitlementPlan;
+pub const EntitlementUsage = @import("entitlement.zig").EntitlementUsage;
 pub const Client = @import("client.zig").Client;
 pub const Batch = @import("client.zig").Batch;
 pub const BatchOptions = @import("client.zig").BatchOptions;
