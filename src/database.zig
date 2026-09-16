@@ -145,8 +145,10 @@ pub const DatabaseApi = struct {
     /// The redirect is followed, and that second request carries NO API key:
     /// the link authorizes itself, and object storage is a third party.
     ///
-    /// `retries` applies to reaching the API for the link, not to the transfer:
-    /// resuming a half-moved gigabyte is a different problem from asking again.
+    /// `retries` applies to reaching the API for the link, and to object storage
+    /// failing before the first byte moves. A transfer that dies part way is
+    /// never started again: resuming a half-moved gigabyte is a different
+    /// problem from asking again.
     pub fn download(
         self: DatabaseApi,
         id: []const u8,
@@ -239,7 +241,9 @@ pub const DatabaseApi = struct {
         return bytes;
     }
 
-    /// Asks the API for the presigned link and opens it.
+    /// Asks the API for the presigned link and opens it. Only this header phase
+    /// retries: a 5xx or a transport failure from object storage before any
+    /// byte has moved is asked again, the same as any API call.
     fn begin(
         self: DatabaseApi,
         transfer: *http.Transfer,
@@ -254,7 +258,20 @@ pub const DatabaseApi = struct {
             .diagnostics = diag,
         });
         defer gpa.free(url);
-        return transfer.begin(&self.client.transport, gpa, url, diag);
+
+        var delay = http.retry_base_delay;
+        var remaining = options.retries orelse self.client.retries;
+        while (true) {
+            diag.reset();
+            if (transfer.begin(&self.client.transport, gpa, url, diag)) {
+                return;
+            } else |err| {
+                if (remaining == 0 or !errors.isRetryable(err) or !http.backOff(self.client.io, diag, &delay)) {
+                    return err;
+                }
+                remaining -= 1;
+            }
+        }
     }
 
     fn fetch(

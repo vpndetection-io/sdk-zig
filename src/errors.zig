@@ -22,6 +22,25 @@ pub const Error = error{
 /// What every call in this library can fail with.
 pub const CallError = Error || std.mem.Allocator.Error;
 
+/// The authorization server refusing an OAuth request. A set of its own, because
+/// a new member of `Error` would break every caller switching on it
+/// exhaustively. The code and description are in `Diagnostics.errorCode` and
+/// `Diagnostics.errorDescription`, and none of these is worth retrying.
+pub const OauthError = error{
+    /// The person refused the sign-in (`access_denied`).
+    OauthAccessDenied,
+    /// The device code expired, or was already exchanged or refused
+    /// (`expired_token`). A poll that outlived the code locally leaves no status.
+    OauthExpiredToken,
+    /// Any other refusal, including a code this version has never seen:
+    /// `authorization_pending`, `slow_down`, `invalid_grant`, `invalid_client`.
+    OauthRejected,
+};
+
+/// What every `OauthApi` call can fail with: an OAuth refusal, or exactly what
+/// any other call fails with.
+pub const OauthCallError = CallError || OauthError;
+
 /// Whether retrying this exact request could succeed.
 pub fn isRetryable(err: CallError) bool {
     return switch (err) {
@@ -90,11 +109,17 @@ pub const Diagnostics = struct {
     retry_after_s: ?u64 = null,
     message_buf: [max_message_len]u8 = undefined,
     message_len: usize = 0,
+    error_code_buf: [max_error_code_len]u8 = undefined,
+    error_code_len: ?usize = null,
+    error_description_buf: [max_message_len]u8 = undefined,
+    error_description_len: ?usize = null,
 
     /// Long enough for every message the API sends, and short enough that a
     /// batch of a hundred thousand addresses can afford one per entry. A longer
     /// message is truncated rather than allocated.
     pub const max_message_len = 128;
+    /// Longer than every code RFC 6749 and RFC 8628 define.
+    pub const max_error_code_len = 48;
 
     /// The API's own explanation, or the transport failure's name. Empty when
     /// the call succeeded or the failure carried no text.
@@ -102,10 +127,44 @@ pub const Diagnostics = struct {
         return d.message_buf[0..d.message_len];
     }
 
+    /// The OAuth `error` behind an `OauthError`, and null after any other
+    /// failure.
+    pub fn errorCode(d: *const Diagnostics) ?[]const u8 {
+        const len = d.error_code_len orelse return null;
+        return d.error_code_buf[0..len];
+    }
+
+    /// The `error_description` the server sent with an `OauthError`, and null
+    /// when it sent none, or none as a string.
+    pub fn errorDescription(d: *const Diagnostics) ?[]const u8 {
+        const len = d.error_description_len orelse return null;
+        return d.error_description_buf[0..len];
+    }
+
     pub fn reset(d: *Diagnostics) void {
         d.status = null;
         d.retry_after_s = null;
         d.message_len = 0;
+        d.error_code_len = null;
+        d.error_description_len = null;
+    }
+
+    /// Records an OAuth refusal: its code, its description, and a message of
+    /// `<code>` or `<code>: <description>`.
+    pub fn setOauth(d: *Diagnostics, code: []const u8, description: ?[]const u8) void {
+        const code_len = @min(code.len, max_error_code_len);
+        @memcpy(d.error_code_buf[0..code_len], code[0..code_len]);
+        d.error_code_len = code_len;
+        d.error_description_len = null;
+        var buffer: [max_message_len]u8 = undefined;
+        if (description) |text| {
+            const len = @min(text.len, max_message_len);
+            @memcpy(d.error_description_buf[0..len], text[0..len]);
+            d.error_description_len = len;
+            d.setMessage(std.fmt.bufPrint(&buffer, "{s}: {s}", .{ code, text }) catch &buffer);
+        } else {
+            d.setMessage(code);
+        }
     }
 
     pub fn setMessage(d: *Diagnostics, text: []const u8) void {
@@ -114,6 +173,37 @@ pub const Diagnostics = struct {
         d.message_len = len;
     }
 };
+
+/// An OAuth refusal, when `body` is a JSON object with a STRING `error`: its
+/// code and description go to `diag`. Null for any other body, which is then
+/// the ordinary failure its status describes. Only a 4xx is ever asked.
+pub fn oauthRefusal(gpa: std.mem.Allocator, body: []const u8, diag: *Diagnostics) ?OauthError {
+    const parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{}) catch return null;
+    defer parsed.deinit();
+    if (parsed.value != .object) {
+        return null;
+    }
+    const code = parsed.value.object.get("error") orelse return null;
+    if (code != .string) {
+        return null;
+    }
+    const description: ?[]const u8 = if (parsed.value.object.get("error_description")) |given|
+        (if (given == .string) given.string else null)
+    else
+        null;
+    diag.setOauth(code.string, description);
+    return oauthErrorFor(code.string);
+}
+
+pub fn oauthErrorFor(code: []const u8) OauthError {
+    if (std.mem.eql(u8, code, "access_denied")) {
+        return error.OauthAccessDenied;
+    }
+    if (std.mem.eql(u8, code, "expired_token")) {
+        return error.OauthExpiredToken;
+    }
+    return error.OauthRejected;
+}
 
 /// The two APIs behind this host answer with different envelopes: the lookup
 /// endpoint uses `error`, the database endpoints use `rc`. Both are read here so

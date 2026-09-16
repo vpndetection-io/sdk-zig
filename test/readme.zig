@@ -86,4 +86,26 @@ fn examples(gpa: std.mem.Allocator) !void {
 
     const size = try client.database().metadata(id, .{});
     defer size.deinit();
+
+    try signIn(gpa, &threaded);
+}
+
+fn signIn(gpa: std.mem.Allocator, threaded: *std.Io.Threaded) !void {
+    var client = try vpndetection.Client.init(gpa, threaded.io(), .{});
+    defer client.deinit();
+    const device = try client.oauth().deviceAuthorization("your-client-id", .{ .scope = "account.read apikeys.read apikeys.reveal" });
+    defer device.deinit();
+    std.debug.print("Open {s} and enter {s}\n", .{ device.value.verification_uri, device.value.user_code });
+
+    const token = try client.oauth().pollDeviceToken("your-client-id", device.value, .{});
+    defer token.deinit();
+    const apikey = token.value.apikey orelse return error.NoApiKey; // none was picked, or it cannot be shown again
+    var keyed = try vpndetection.Client.init(gpa, threaded.io(), .{ .api_key = apikey });
+    defer keyed.deinit();
+
+    const refresh_token = token.value.refresh_token orelse "";
+    client.oauth().revoke("your-client-id", refresh_token, .{}) catch |err| switch (err) {
+        error.OauthAccessDenied, error.OauthExpiredToken => {},
+        else => return err,
+    };
 }

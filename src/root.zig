@@ -67,10 +67,19 @@ pub const Database = @import("database.zig").Database;
 
 pub const DatabaseVersion = @import("database.zig").DatabaseVersion;
 
+pub const DeviceAuthorization = @import("oauth.zig").DeviceAuthorization;
+pub const DeviceAuthorizationOptions = @import("oauth.zig").DeviceAuthorizationOptions;
+pub const OauthApi = @import("oauth.zig").OauthApi;
+pub const OauthMetadata = @import("oauth.zig").OauthMetadata;
+pub const OauthOptions = @import("oauth.zig").OauthOptions;
+pub const TokenResponse = @import("oauth.zig").TokenResponse;
+
 pub const CallError = @import("errors.zig").CallError;
 pub const Diagnostics = @import("errors.zig").Diagnostics;
 pub const Error = @import("errors.zig").Error;
 pub const isRetryable = @import("errors.zig").isRetryable;
+pub const OauthCallError = @import("errors.zig").OauthCallError;
+pub const OauthError = @import("errors.zig").OauthError;
 pub const kindName = @import("errors.zig").kindName;
 
 pub const isBogon = @import("bogon.zig").isBogon;
@@ -83,4 +92,5 @@ test {
     _ = @import("errors.zig");
     _ = @import("http.zig");
     _ = @import("lookup.zig");
+    _ = @import("oauth.zig");
 }

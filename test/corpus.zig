@@ -21,6 +21,7 @@ pub const Corpus = struct {
     errors: []const ErrorCase,
     batch: []const BatchCase,
     bogons: Bogons,
+    oauth: Oauth,
 
     pub fn batchCase(self: Corpus, name: []const u8) BatchCase {
         for (self.batch) |case| {
@@ -100,6 +101,125 @@ pub const BatchExpect = struct {
 pub const Bogons = struct {
     v4: []const []const u8,
     v6: []const []const u8,
+};
+
+/// The `oauth` section. `deferred` names operations this release does not ship,
+/// so it is never declared here and the loader skips it with every other
+/// unknown member.
+pub const Oauth = struct {
+    endpoints: struct {
+        metadata: Endpoint,
+        deviceAuthorization: Endpoint,
+        token: Endpoint,
+        revoke: Endpoint,
+    },
+    noCredential: struct {
+        apiKey: []const u8,
+        forbiddenHeaders: []const []const u8,
+        forbiddenQuery: []const []const u8,
+    },
+    forms: struct {
+        contentType: []const u8,
+        cases: []const FormCase,
+    },
+    responses: struct {
+        metadata: []const ResponseCase,
+        deviceAuthorization: []const ResponseCase,
+        token: []const ResponseCase,
+        revoke: []const Served,
+    },
+    errors: struct { cases: []const OauthErrorCase },
+    retries: struct { cases: []const RetryCase },
+    poll: struct { cases: []const PollCase },
+};
+
+pub const Endpoint = struct { method: []const u8, path: []const u8 };
+
+pub const OauthArgs = struct {
+    clientId: ?[]const u8 = null,
+    scope: ?[]const u8 = null,
+    resource: ?[]const u8 = null,
+    deviceCode: ?[]const u8 = null,
+    refreshToken: ?[]const u8 = null,
+    token: ?[]const u8 = null,
+};
+
+pub const FormCase = struct {
+    name: []const u8,
+    operation: []const u8,
+    endpoint: []const u8,
+    args: OauthArgs,
+    fields: std.json.ArrayHashMap([]const u8),
+};
+
+/// One canned response: `body` is served as JSON, `rawBody` verbatim.
+pub const Served = struct {
+    name: []const u8 = "",
+    status: u16,
+    body: ?std.json.Value = null,
+    rawBody: ?[]const u8 = null,
+
+    pub fn text(self: Served, arena: Allocator) ![]const u8 {
+        if (self.rawBody) |raw| {
+            return raw;
+        }
+        return if (self.body) |value| json(arena, value) else "";
+    }
+};
+
+pub const ResponseCase = struct {
+    name: []const u8,
+    status: u16,
+    body: std.json.Value,
+    expect: struct {
+        present: std.json.ArrayHashMap(std.json.Value),
+        absent: []const []const u8,
+    },
+};
+
+pub const OauthErrorCase = struct {
+    name: []const u8,
+    status: u16,
+    body: ?std.json.Value = null,
+    rawBody: ?[]const u8 = null,
+    expect: OauthExpect,
+
+    pub fn served(self: OauthErrorCase) Served {
+        return .{ .name = self.name, .status = self.status, .body = self.body, .rawBody = self.rawBody };
+    }
+};
+
+/// A member left out of the corpus is not asserted, which `unstated` stands
+/// for: JSON null is a stated absence, so it cannot double as "not said".
+pub const unstated: std.json.Value = .{ .bool = false };
+
+pub const OauthExpect = struct {
+    type: ?[]const u8 = null,
+    outcome: ?[]const u8 = null,
+    errorCode: ?[]const u8 = null,
+    errorDescription: std.json.Value = unstated,
+    status: std.json.Value = unstated,
+    kind: ?[]const u8 = null,
+    retryable: ?bool = null,
+    requests: ?usize = null,
+    waits: []const i64 = &.{},
+    token: ?std.json.ArrayHashMap(std.json.Value) = null,
+};
+
+pub const RetryCase = struct {
+    name: []const u8,
+    operation: []const u8,
+    args: OauthArgs,
+    responses: []const Served,
+    expect: OauthExpect,
+};
+
+pub const PollCase = struct {
+    name: []const u8,
+    clientId: []const u8,
+    device: vpndetection.DeviceAuthorization,
+    responses: []const Served,
+    expect: OauthExpect,
 };
 
 /// The caller owns the arena, and every slice in the corpus lives in it.

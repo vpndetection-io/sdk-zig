@@ -36,10 +36,27 @@ pub const Route = struct {
 
 /// One request the stub answered, as much of it as a test is allowed to keep.
 pub const Call = struct {
+    method: []const u8,
     path: []const u8,
+    /// The request target as sent, query string included.
+    target: []const u8,
+    /// The request line and every header, as sent.
+    head: []const u8,
+    body: []const u8,
     /// Empty when the request carried no `Authorization` header at all.
     authorization: []const u8,
+    /// When the request finished arriving, on the stub's own clock.
+    at: Io.Timestamp,
+
+    pub fn header(self: Call, name: []const u8) ?[]const u8 {
+        return headerValue(self.head, name);
+    }
 };
+
+/// Past this many requests the stub ends the test process: a client caught in a
+/// loop cannot be failed from inside a call it never returns from, and an
+/// answer it can shrug off bounds nothing.
+pub const request_bound = 64;
 
 pub const Stub = struct {
     gpa: Allocator,
@@ -53,6 +70,7 @@ pub const Stub = struct {
     connections: Io.Group = .init,
     mutex: Io.Mutex = .init,
     routes: std.StringArrayHashMapUnmanaged(Route) = .empty,
+    sequences: std.StringArrayHashMapUnmanaged(Sequence) = .empty,
     calls: std.ArrayList(Call) = .empty,
     /// The last `User-Agent` header seen.
     user_agent: []const u8 = "",
@@ -89,6 +107,7 @@ pub const Stub = struct {
         self.server.deinit(self.io);
 
         self.routes.deinit(self.gpa);
+        self.sequences.deinit(self.gpa);
         self.calls.deinit(self.gpa);
         self.arena.deinit();
         const gpa = self.gpa;
@@ -103,6 +122,15 @@ pub const Stub = struct {
     pub fn route(self: *Stub, path: []const u8, value: Route) !void {
         const gop = try self.routes.getOrPut(self.gpa, try self.own(path));
         gop.value_ptr.* = value;
+    }
+
+    /// Answers `path` with these responses in order, ahead of any route. Once
+    /// they run out every further request there is a 599, so an extra attempt
+    /// is counted and fails rather than picking up an answer meant for another.
+    /// The slice must outlive the stub: build it in the stub's arena.
+    pub fn sequence(self: *Stub, path: []const u8, values: []const Route) !void {
+        const gop = try self.sequences.getOrPut(self.gpa, try self.own(path));
+        gop.value_ptr.* = .{ .routes = values };
     }
 
     /// A successful free-tier lookup for one address, which is what most cases
@@ -201,7 +229,7 @@ fn serve(self: *Stub, stream: Io.net.Stream) void {
     var decoded_buffer: [256]u8 = undefined;
     const path = percentDecode(target, &decoded_buffer);
 
-    const found = record(self, path, head);
+    const found = record(self, path, head, body);
     if (self.delay.nanoseconds > 0) {
         self.io.sleep(self.delay, .awake) catch {};
     }
@@ -234,20 +262,44 @@ fn release(self: *Stub) void {
     self.in_flight -= 1;
 }
 
-fn record(self: *Stub, path: []const u8, head: []const u8) ?Route {
+fn record(self: *Stub, path: []const u8, head: []const u8, body: []const u8) ?Route {
+    const at = Io.Clock.awake.now(self.io);
     self.mutex.lockUncancelable(self.io);
     defer self.mutex.unlock(self.io);
 
+    if (self.calls.items.len == request_bound) {
+        std.debug.print("the stub was asked for {d} requests: a loop in the code under test\n", .{request_bound});
+        std.process.exit(1);
+    }
     self.in_flight += 1;
     self.peak_in_flight = @max(self.peak_in_flight, self.in_flight);
-    const owned = self.arena.allocator().dupe(u8, path) catch return null;
+    const arena = self.arena.allocator();
+    const owned = arena.dupe(u8, path) catch return null;
+    const line_end = std.mem.indexOf(u8, head, " ") orelse 0;
     self.calls.append(self.gpa, .{
+        .method = arena.dupe(u8, head[0..line_end]) catch "",
         .path = owned,
+        .target = arena.dupe(u8, rawTarget(head) orelse "") catch "",
+        .head = arena.dupe(u8, head) catch "",
+        .body = arena.dupe(u8, body) catch "",
         .authorization = ownedHeader(self, head, "authorization"),
+        .at = at,
     }) catch {};
     self.user_agent = ownedHeader(self, head, "user-agent");
+    if (self.sequences.getPtr(path)) |queue| {
+        if (queue.next == queue.routes.len) {
+            return .{ .status = 599, .body = "{\"stub\":\"exhausted\"}" };
+        }
+        queue.next += 1;
+        return queue.routes[queue.next - 1];
+    }
     return self.routes.get(path);
 }
+
+const Sequence = struct {
+    routes: []const Route,
+    next: usize = 0,
+};
 
 /// A POST /batch is answered the way the API answers one: every address the
 /// table knows is a result if its route is a 200 and an entry error otherwise,
@@ -332,12 +384,16 @@ fn readHead(reader: *Io.Reader, out: []u8) ![]const u8 {
 }
 
 fn requestTarget(head: []const u8) ?[]const u8 {
+    const target = rawTarget(head) orelse return null;
+    const query = std.mem.indexOfScalar(u8, target, '?') orelse return target;
+    return target[0..query];
+}
+
+fn rawTarget(head: []const u8) ?[]const u8 {
     const line_end = std.mem.indexOf(u8, head, "\r\n") orelse return null;
     var parts = std.mem.tokenizeScalar(u8, head[0..line_end], ' ');
     _ = parts.next() orelse return null;
-    const target = parts.next() orelse return null;
-    const query = std.mem.indexOfScalar(u8, target, '?') orelse return target;
-    return target[0..query];
+    return parts.next();
 }
 
 fn headerValue(head: []const u8, name: []const u8) ?[]const u8 {

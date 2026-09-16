@@ -10,7 +10,7 @@ The library helps you query VPNDetection's APIs for anonymity detection includin
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/vpndetection-io/sdk-zig#v4.1.0
+zig fetch --save git+https://github.com/vpndetection-io/sdk-zig#v4.2.0
 ```
 
 Then add the module to whatever you are building, in `build.zig`:
@@ -221,6 +221,26 @@ const written = try client.database().download(id, .mmdb, "vpn_ip.mmdb", .{});
 `downloadBytes` holds the **entire file** in memory. The catalog spans five orders of magnitude, from `cdn_ip_v1` at ~10 KB to `resproxy_ip_90d_v1` at 1.79 GB, and a 1.79 GB dataset is 1.79 GB of resident memory here, so reach for it at the small end. `client.database().metadata(id, .{})` publishes the size per format without transferring anything, which is how you find out which end you are at.
 
 `downloadUrl` hands back the link rather than the bytes, so you choose how to move the file; the link authorizes the START of a transfer, so one already running is not interrupted when it lapses. The client never follows that redirect for you. `download` and `downloadBytes` do follow it, and that second request carries no API key: the link authorizes itself, and object storage has no business holding your credential.
+
+### Sign in with OAuth (device flow)
+
+A program running on the person's own machine can let them sign in with a browser and pick one of their API keys, instead of asking them to paste it:
+
+```zig
+var client = try vpndetection.Client.init(gpa, threaded.io(), .{});
+defer client.deinit();
+const device = try client.oauth().deviceAuthorization("your-client-id", .{ .scope = "account.read apikeys.read apikeys.reveal" });
+defer device.deinit();
+std.debug.print("Open {s} and enter {s}\n", .{ device.value.verification_uri, device.value.user_code });
+
+const token = try client.oauth().pollDeviceToken("your-client-id", device.value, .{});
+defer token.deinit();
+const apikey = token.value.apikey orelse return error.NoApiKey; // none was picked, or it cannot be shown again
+var keyed = try vpndetection.Client.init(gpa, threaded.io(), .{ .api_key = apikey });
+defer keyed.deinit();
+```
+
+A denied sign-in fails with `error.OauthAccessDenied` and a code that ran out with `error.OauthExpiredToken`. Client IDs are issued on request from support@vpndetection.io, and `client.oauth().revoke("your-client-id", refresh_token, .{})` signs the machine out again.
 
 ### Absent is not false
 

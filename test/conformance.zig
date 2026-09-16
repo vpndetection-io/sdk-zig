@@ -222,27 +222,34 @@ test "a cache hit issues no second request" {
     try std.testing.expectEqual(case.expect.httpRequests.?, harness.stub.callCount());
 }
 
+// Both the boundary and the absence of any cap: a batch of any size is chunks of
+// 1000, never a refusal.
 test "a large batch is sent in chunks of a thousand" {
     const gpa = std.testing.allocator;
     const data = try corpus.load(gpa);
     defer data.deinit();
-    const case = data.value.batchCase("chunks-of-one-thousand");
 
-    const harness = try Harness.start(gpa);
-    defer harness.deinit();
-    for (case.input) |ip| {
-        try harness.stub.routeLookup(ip);
-    }
+    for ([_][]const u8{ "chunks-of-one-thousand", "uncapped-input-is-chunked" }) |name| {
+        const case = data.value.batchCase(name);
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        for (case.input) |ip| {
+            try harness.stub.routeLookup(ip);
+        }
 
-    var client = try harness.client(.{ .cache = null });
-    defer client.deinit();
-    var batch = try client.lookupBatch(case.input, .{});
-    defer batch.deinit();
+        var client = try harness.client(.{ .cache = null });
+        defer client.deinit();
+        var batch = try client.lookupBatch(case.input, .{});
+        defer batch.deinit();
 
-    try std.testing.expectEqual(case.expect.keyCount.?, batch.count());
-    try std.testing.expectEqual(case.expect.httpRequests.?, harness.stub.callCount());
-    for (case.input) |ip| {
-        try std.testing.expectEqualStrings(ip, batch.get(ip).?.ok.value.ip);
+        try std.testing.expectEqual(case.expect.keyCount.?, batch.count());
+        std.testing.expectEqual(case.expect.httpRequests.?, harness.stub.callCount()) catch |err| {
+            std.debug.print("{s}: requests\n", .{name});
+            return err;
+        };
+        for (case.input) |ip| {
+            try std.testing.expectEqualStrings(ip, batch.get(ip).?.ok.value.ip);
+        }
     }
 }
 

@@ -7,6 +7,7 @@ const database_mod = @import("database.zig");
 const errors = @import("errors.zig");
 const http = @import("http.zig");
 const lookup_mod = @import("lookup.zig");
+const oauth_mod = @import("oauth.zig");
 
 const Allocator = std.mem.Allocator;
 const CallError = errors.CallError;
@@ -61,6 +62,8 @@ pub const BatchOptions = struct {
     retries: ?u32 = null,
     /// Batch requests - chunks of up to 1000 addresses - in flight for THIS
     /// batch only, so one large batch does not need a second client to widen it.
+    /// Zero refuses the whole batch: every address fails with
+    /// `error.BadRequest` before any request is sent.
     concurrency: ?usize = null,
 };
 
@@ -304,6 +307,7 @@ pub const Client = struct {
     ) Allocator.Error!Batch {
         var batch: Batch = .{ .gpa = self.gpa };
         errdefer batch.deinit();
+        const refused = if (options.concurrency) |n| n == 0 else false;
         // The indexes of the entries that go to the API; a bogon or a cached
         // answer is filled in here and never sent.
         var pending: std.ArrayList(usize) = .empty;
@@ -318,6 +322,12 @@ pub const Client = struct {
                 try batch.entries.put(self.gpa, key, .{ .failed = .{ .err = error.Network } });
             }
             const index = batch.entries.count() - 1;
+            if (refused) {
+                var failure: Batch.Failure = .{ .err = error.BadRequest };
+                failure.diagnostics.setMessage("concurrency must be at least 1");
+                batch.entries.values()[index] = .{ .failed = failure };
+                continue;
+            }
             if (bogon.isBogon(key)) {
                 batch.entries.values()[index] = .{ .ok = try lookup_mod.bogonLookup(self.gpa, key) };
                 continue;
@@ -348,7 +358,7 @@ pub const Client = struct {
             .retries = options.retries,
         };
         const chunk_count = (pending.items.len + batch_max - 1) / batch_max;
-        const limit = @max(1, options.concurrency orelse self.concurrency);
+        const limit = options.concurrency orelse self.concurrency;
         const workers = @min(limit, chunk_count);
         const helpers = try self.gpa.alloc(Io.Future(void), workers - 1);
         defer self.gpa.free(helpers);
@@ -453,6 +463,13 @@ pub const Client = struct {
     /// The licensed dataset downloads, for keys carrying the `db.download`
     /// scope.
     pub fn database(self: *Client) database_mod.DatabaseApi {
+        return .{ .client = self };
+    }
+
+    /// Signing a person in with the OAuth device flow, so a program on their
+    /// own machine can be handed one of their API keys. These requests never
+    /// carry this client's API key, so a client built without one works.
+    pub fn oauth(self: *Client) oauth_mod.OauthApi {
         return .{ .client = self };
     }
 
