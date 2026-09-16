@@ -77,6 +77,31 @@ test "without an override the client concurrency still applies" {
     try std.testing.expect(harness.stub.peak() <= 2);
 }
 
+// Chunking is the library's job, so a batch has no size limit of its own: 2,500
+// addresses are three requests of at most 1000, never a refusal and never a
+// request per address.
+test "a batch of any size is chunked rather than refused" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    const ips = try routeMany(harness);
+    const addresses = ips.items[0..2500];
+
+    var client = try harness.client(.{ .cache = null });
+    defer client.deinit();
+    var batch = try client.lookupBatch(addresses, .{});
+    defer batch.deinit();
+
+    try std.testing.expectEqual(3, harness.stub.callCount());
+    for (harness.stub.seen()) |call| {
+        try std.testing.expectEqualStrings("/batch", call.path);
+    }
+    try std.testing.expectEqual(2500, batch.count());
+    for (addresses) |ip| {
+        try std.testing.expectEqualStrings(ip, batch.get(ip).?.ok.value.ip);
+    }
+}
+
 test "retries are configurable per call" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
