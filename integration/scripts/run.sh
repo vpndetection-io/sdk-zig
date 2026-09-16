@@ -31,7 +31,7 @@ cd "$(dirname "$0")/.."
 REPO_URL="https://github.com/vpndetection-io/sdk-zig"
 # The major this suite is written against. Read by hand rather than parsed out
 # of a manifest: the gate has to run before anything is fetched or built.
-RANGE_LOW="4.0.0"
+RANGE_LOW="4.2.0"
 RANGE_HIGH="5.0.0"
 
 LOCAL_PATH="${SDK_LOCAL_PATH:-}"

@@ -12,7 +12,7 @@ pub fn build(b: *std.Build) void {
     const sdk = b.dependency("vpndetection", .{ .target = target, .optimize = optimize });
 
     const test_step = b.step("test", "Run the staging integration suite");
-    for ([_][]const u8{ "src/lookup.zig", "src/database.zig" }) |path| {
+    for ([_][]const u8{ "src/lookup.zig", "src/database.zig", "src/oauth.zig" }) |path| {
         const tests = b.addTest(.{ .root_module = b.createModule(.{
             .root_source_file = b.path(path),
             .target = target,
