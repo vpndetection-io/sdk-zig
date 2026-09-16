@@ -22,6 +22,7 @@ const Io = std.Io;
 
 /// What a test is allowed to remember about one request.
 pub const Fact = struct {
+    method: std.http.Method,
     /// Path only. A query string carries the dataset id and the format, and on
     /// some endpoints an API key, so it is dropped before anything is stored.
     path: []const u8,
@@ -30,6 +31,9 @@ pub const Fact = struct {
     /// check against it is vacuously true.
     carried_key: bool,
     status: u16,
+    /// The addresses a batch body carried, empty for every other request. They
+    /// are the suite's own input, so keeping them discloses nothing.
+    ips: []const []const u8 = &.{},
 };
 
 pub const Proxy = struct {
@@ -138,22 +142,40 @@ fn serve(self: *Proxy, stream: Io.net.Stream) void {
     var reader = stream.reader(self.io, &read_buffer);
     var head_buffer: [16 * 1024]u8 = undefined;
     const head = readHead(&reader.interface, &head_buffer) catch return;
+    const method = requestMethod(head) orelse return;
     const target = requestTarget(head) orelse return;
     const authorization = headerValue(head, "authorization") orelse "";
+    // Only a batch's POST carries a body, sized by Content-Length.
+    const length = if (headerValue(head, "content-length")) |value|
+        std.fmt.parseInt(usize, value, 10) catch return
+    else
+        0;
+    if (length > Proxy.max_body_bytes) {
+        return;
+    }
+    const sent = self.arena.allocator().alloc(u8, length) catch return;
+    reader.interface.readSliceAll(sent) catch return;
 
-    const answer = forward(self, target, authorization) catch |err| {
+    const request: Request = .{ .method = method, .target = target, .body = sent };
+    const answer = forward(self, request, authorization) catch |err| {
         // A proxy that cannot reach staging must not look like an API answer:
         // 502 with the cause is what a test sees.
         var message: [256]u8 = undefined;
         const body = std.fmt.bufPrint(&message, "{{\"rc\":\"PROXY_{s}\"}}", .{@errorName(err)}) catch
             "{\"rc\":\"PROXY_FAILED\"}";
-        record(self, target, authorization, 502, null);
+        record(self, request, authorization, 502, null);
         writeResponse(self.io, stream, .{ .status = 502, .body = body }) catch {};
         return;
     };
-    record(self, target, authorization, answer.status, answer.body);
+    record(self, request, authorization, answer.status, answer.body);
     writeResponse(self.io, stream, answer) catch {};
 }
+
+const Request = struct {
+    method: std.http.Method,
+    target: []const u8,
+    body: []u8,
+};
 
 const Answer = struct {
     status: u16,
@@ -163,26 +185,32 @@ const Answer = struct {
     retry_after: ?[]const u8 = null,
 };
 
-/// Issues the same GET upstream, carrying the credential through untouched.
+/// Issues the same request upstream, carrying the credential and any body
+/// through untouched.
 ///
 /// Redirects are NOT followed: the 302 the download endpoint answers with is
 /// the thing under test, and it has to reach the library.
-fn forward(self: *Proxy, target: []const u8, authorization: []const u8) !Answer {
+fn forward(self: *Proxy, incoming: Request, authorization: []const u8) !Answer {
     const arena = self.arena.allocator();
-    const url = try std.fmt.allocPrint(arena, "{s}{s}", .{ self.upstream, target });
+    const url = try std.fmt.allocPrint(arena, "{s}{s}", .{ self.upstream, incoming.target });
 
     var client: std.http.Client = .{ .allocator = self.gpa, .io = self.io };
     defer client.deinit();
 
-    var request = try client.request(.GET, try std.Uri.parse(url), .{
+    var request = try client.request(incoming.method, try std.Uri.parse(url), .{
         .redirect_behavior = .unhandled,
         .headers = .{
             .authorization = if (authorization.len > 0) .{ .override = authorization } else .omit,
             .user_agent = .{ .override = "vpndetection-zig-integration" },
+            .content_type = if (incoming.body.len > 0) .{ .override = "application/json" } else .default,
         },
     });
     defer request.deinit();
-    try request.sendBodiless();
+    if (incoming.body.len > 0) {
+        try request.sendBodyComplete(incoming.body);
+    } else {
+        try request.sendBodiless();
+    }
     var response = try request.receiveHead(&.{});
 
     var answer: Answer = .{ .status = @intFromEnum(response.head.status) };
@@ -207,17 +235,27 @@ fn own(arena: Allocator, value: ?[]const u8) !?[]const u8 {
     return if (value) |text| try arena.dupe(u8, text) else null;
 }
 
-fn record(self: *Proxy, target: []const u8, authorization: []const u8, status: u16, body: ?[]const u8) void {
+fn record(self: *Proxy, request: Request, authorization: []const u8, status: u16, body: ?[]const u8) void {
     const arena = self.arena.allocator();
-    const query = std.mem.indexOfScalar(u8, target, '?') orelse target.len;
-    const path = arena.dupe(u8, target[0..query]) catch return;
+    const query = std.mem.indexOfScalar(u8, request.target, '?') orelse request.target.len;
+    const path = arena.dupe(u8, request.target[0..query]) catch return;
+    const Batch = struct { ips: []const []const u8 };
+    const batch = std.json.parseFromSliceLeaky(Batch, arena, request.body, .{
+        .ignore_unknown_fields = true,
+    }) catch Batch{ .ips = &.{} };
     // A boolean, computed here and never stored: the header itself is a
     // credential and these logs are public.
     const carried = self.key.len > 0 and std.mem.indexOf(u8, authorization, self.key) != null;
 
     self.mutex.lockUncancelable(self.io);
     defer self.mutex.unlock(self.io);
-    self.facts.append(self.gpa, .{ .path = path, .carried_key = carried, .status = status }) catch {};
+    self.facts.append(self.gpa, .{
+        .method = request.method,
+        .path = path,
+        .carried_key = carried,
+        .status = status,
+        .ips = batch.ips,
+    }) catch {};
     if (body) |bytes| {
         self.bodies.put(self.gpa, path, bytes) catch {};
     }
@@ -259,6 +297,11 @@ fn readHead(reader: *Io.Reader, out: []u8) ![]const u8 {
             return out[0..len];
         }
     }
+}
+
+fn requestMethod(head: []const u8) ?std.http.Method {
+    const token_end = std.mem.indexOfScalar(u8, head, ' ') orelse return null;
+    return std.meta.stringToEnum(std.http.Method, head[0..token_end]);
 }
 
 fn requestTarget(head: []const u8) ?[]const u8 {

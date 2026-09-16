@@ -157,16 +157,25 @@ test "a batch collapses duplicates and keeps bogons off the wire" {
     defer batch.deinit();
 
     try std.testing.expectEqual(3, batch.count());
-    // Distinct paths rather than a call count, so a retry against a wobbling
-    // staging cannot read as a failure to deduplicate.
-    var asked: std.StringArrayHashMapUnmanaged(void) = .empty;
-    defer asked.deinit(gpa);
+    // One route, POST /batch, and the addresses read off the bodies it carried
+    // rather than a call count, so a retry against a wobbling staging cannot
+    // read as a failure to deduplicate.
+    var sent: std.StringArrayHashMapUnmanaged(void) = .empty;
+    defer sent.deinit(gpa);
     for (rung.proxy.seen()) |fact| {
-        try asked.put(gpa, fact.path, {});
+        try std.testing.expectEqual(std.http.Method.POST, fact.method);
+        try std.testing.expectEqualStrings("/batch", fact.path);
+        var chunk: std.StringArrayHashMapUnmanaged(void) = .empty;
+        defer chunk.deinit(gpa);
+        for (fact.ips) |ip| {
+            try chunk.put(gpa, ip, {});
+            try sent.put(gpa, ip, {});
+        }
+        try std.testing.expectEqual(fact.ips.len, chunk.count());
     }
-    try std.testing.expectEqual(2, asked.count());
-    try std.testing.expect(asked.contains("/" ++ staging.probe));
-    try std.testing.expect(asked.contains("/8.8.8.8"));
+    try std.testing.expectEqual(2, sent.count());
+    try std.testing.expect(sent.contains(staging.probe));
+    try std.testing.expect(sent.contains("8.8.8.8"));
 
     switch (batch.get("10.0.0.1").?) {
         .ok => |answer| try std.testing.expect(answer.is_bogon),
