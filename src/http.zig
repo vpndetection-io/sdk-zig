@@ -20,6 +20,9 @@ pub const Request = struct {
     /// The JSON body of a POST; empty for a GET.
     body: []const u8 = "",
     retries: u32,
+    /// How long ONE attempt may take, from the connection to the last byte of
+    /// the answer. A retry starts a fresh one.
+    timeout: Io.Duration,
     diagnostics: *Diagnostics,
 };
 
@@ -32,14 +35,7 @@ pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) Cal
     var remaining = request.retries;
     while (true) {
         diag.reset();
-        const attempt = switch (request.kind) {
-            .json => if (request.method == .POST)
-                transport.postJson(gpa, request.path, request.body, diag)
-            else
-                transport.getJson(gpa, request.path, request.query, diag),
-            .location => transport.getLocation(gpa, request.path, request.query, diag),
-        };
-        if (attempt) |body| {
+        if (bounded(io, request.timeout, diag, attempt, .{ transport, gpa, request })) |body| {
             return body;
         } else |err| {
             if (remaining == 0 or !errors.isRetryable(err) or !backOff(io, diag, &delay)) {
@@ -48,6 +44,75 @@ pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) Cal
             remaining -= 1;
         }
     }
+}
+
+fn attempt(transport: *Transport, gpa: Allocator, request: Request) CallError![]u8 {
+    const diag = request.diagnostics;
+    return switch (request.kind) {
+        .json => if (request.method == .POST)
+            transport.postJson(gpa, request.path, request.body, diag)
+        else
+            transport.getJson(gpa, request.path, request.query, diag),
+        .location => transport.getLocation(gpa, request.path, request.query, diag),
+    };
+}
+
+/// Runs one attempt against a deadline this library owns, since
+/// `std.http.Client` takes none. The attempt is a task of its own: when the
+/// deadline passes first it is canceled, which interrupts the read or connect it
+/// is blocked in, and then waited for, so nothing it allocated or opened outlives
+/// the call. A timeout is `error.Network`, retryable, with the bound in the
+/// diagnostics. Canceling the task that waits cancels the attempt at once and
+/// stays armed, so a retry's backoff ends the call. An `Io` that cannot start a
+/// concurrent task runs the attempt inline and unbounded: it could not cancel it.
+pub fn bounded(
+    io: Io,
+    timeout: Io.Duration,
+    diag: *Diagnostics,
+    comptime function: anytype,
+    args: std.meta.ArgsTuple(@TypeOf(function)),
+) @typeInfo(@TypeOf(function)).@"fn".return_type.? {
+    const Result = @typeInfo(@TypeOf(function)).@"fn".return_type.?;
+    const Task = struct {
+        fn run(finished: *Io.Event, task_io: Io, task_args: @TypeOf(args)) Result {
+            defer finished.set(task_io);
+            return @call(.auto, function, task_args);
+        }
+    };
+
+    var finished: Io.Event = .unset;
+    var task = io.concurrent(Task.run, .{ &finished, io, args }) catch
+        return @call(.auto, function, args);
+    // A duration rather than a deadline goes to the wait, because an `Io` may
+    // convert a deadline on a clock other than the one it was read from.
+    const deadline: Io.Clock.Timestamp = .fromNow(io, .{ .raw = timeout, .clock = .awake });
+    const canceled = while (true) {
+        const left = deadline.durationFromNow(io);
+        if (left.raw.nanoseconds <= 0) {
+            break false;
+        }
+        finished.waitTimeout(io, .{ .duration = left }) catch |err| switch (err) {
+            // A spurious wakeup reads as a timeout too, so the clock decides.
+            error.Timeout => continue,
+            error.Canceled => break true,
+        };
+        return task.await(io);
+    };
+
+    const outcome = task.cancel(io);
+    if (canceled) {
+        io.recancel();
+        return outcome;
+    }
+    // An attempt that finished while it was being canceled is kept, whatever
+    // it came to. Only the failure the cancelation caused is renamed.
+    if (outcome) |_| {} else |err| if (err == error.Network) {
+        var text: [Diagnostics.max_message_len]u8 = undefined;
+        diag.setMessage(std.fmt.bufPrint(&text, "the request timed out after {d} ms", .{
+            timeout.toMilliseconds(),
+        }) catch "the request timed out");
+    }
+    return outcome;
 }
 
 /// Waits before another attempt: whatever the server asked for, over the
@@ -69,6 +134,7 @@ pub const OauthRequest = struct {
     path: []const u8,
     form: []const u8 = "",
     retries: u32,
+    timeout: Io.Duration,
     diagnostics: *Diagnostics,
 };
 
@@ -85,7 +151,8 @@ pub fn sendOauth(
     var remaining = request.retries;
     while (true) {
         diag.reset();
-        if (transport.oauthAttempt(gpa, request, diag)) |body| {
+        const args = .{ transport, gpa, request, diag };
+        if (bounded(io, request.timeout, diag, Transport.oauthAttempt, args)) |body| {
             return body;
         } else |err| switch (err) {
             error.OauthAccessDenied, error.OauthExpiredToken, error.OauthRejected => return err,

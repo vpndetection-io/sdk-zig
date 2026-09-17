@@ -26,6 +26,15 @@ pub const Route = struct {
     /// follows a redirect it should not is told the file is enormous without the
     /// test having to produce one.
     promised_length: ?u64 = null,
+    /// Stops writing for this long once the head and `stall_after` bytes of the
+    /// body are out, or before the head when that is null, then writes the rest.
+    /// Tearing the stub down ends a stall early, so one outlasting its test
+    /// costs nothing.
+    stall: Io.Duration = .zero,
+    stall_after: ?usize = 0,
+    /// Writes each byte of the body after the stall on its own, this far apart,
+    /// so no one read waits long however long the whole body takes.
+    trickle: Io.Duration = .zero,
 
     pub const Header = struct { name: []const u8, value: []const u8 };
 
@@ -77,6 +86,9 @@ pub const Stub = struct {
     in_flight: usize = 0,
     peak_in_flight: usize = 0,
     delay: Io.Duration = .zero,
+    /// Slow answers the client stopped reading, seen as a write that failed.
+    hangups: usize = 0,
+    closing: Io.Event = .unset,
 
     /// Binds an ephemeral port on the loopback and starts serving.
     pub fn start(gpa: Allocator, io: Io) !*Stub {
@@ -99,6 +111,7 @@ pub const Stub = struct {
     }
 
     pub fn deinit(self: *Stub) void {
+        self.closing.set(self.io);
         // Cancelling is what makes the blocked accept return: it is a
         // cancelation point, so the loop ends there rather than on the next
         // connection that happens to arrive.
@@ -166,6 +179,12 @@ pub const Stub = struct {
         return self.calls.items;
     }
 
+    pub fn hangupCount(self: *Stub) usize {
+        self.mutex.lockUncancelable(self.io);
+        defer self.mutex.unlock(self.io);
+        return self.hangups;
+    }
+
     pub fn peak(self: *Stub) usize {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
@@ -197,6 +216,23 @@ pub const Stub = struct {
         self.mutex.lockUncancelable(self.io);
         defer self.mutex.unlock(self.io);
         return self.calls.items.len == 1 and std.mem.eql(u8, self.calls.items[0].path, path);
+    }
+
+    /// Waits `duration` on the real clock, or less if the stub is torn down
+    /// meanwhile, which is when this answers false.
+    fn pause(self: *Stub, duration: Io.Duration) bool {
+        const until: Io.Clock.Timestamp = .fromNow(self.io, .{ .raw = duration, .clock = .awake });
+        while (!self.closing.isSet()) {
+            const left = until.durationFromNow(self.io);
+            if (left.raw.nanoseconds <= 0) {
+                return true;
+            }
+            self.closing.waitTimeout(self.io, .{ .duration = left }) catch |err| switch (err) {
+                error.Timeout => {},
+                error.Canceled => return false,
+            };
+        }
+        return false;
     }
 };
 
@@ -243,7 +279,7 @@ fn serve(self: *Stub, stream: Io.net.Stream) void {
 
     // An unrouted address gets what the real API gives one, so a test that
     // forgets a route fails as a bad request rather than as a hang.
-    const answer = if (std.mem.eql(u8, path, "/batch"))
+    var answer = if (std.mem.eql(u8, path, "/batch"))
         (if (batchAnswer(self, body)) |text| Route.ok(text) else |_| Route{
             .status = 500,
             .body = "{\"error\":\"the stub could not build the batch answer\"}",
@@ -253,7 +289,13 @@ fn serve(self: *Stub, stream: Io.net.Stream) void {
             .status = 400,
             .body = "{\"error\":\"not a valid IP address\"}",
         };
-    writeResponse(self.io, stream, answer) catch {};
+    // A route on /batch shapes only the pace of the answer built above.
+    if (found) |pace| {
+        answer.stall = pace.stall;
+        answer.stall_after = pace.stall_after;
+        answer.trickle = pace.trickle;
+    }
+    writeResponse(self, stream, answer) catch {};
 }
 
 fn release(self: *Stub) void {
@@ -425,10 +467,14 @@ fn percentDecode(text: []const u8, out: []u8) []const u8 {
     return out[0..len];
 }
 
-fn writeResponse(io: Io, stream: Io.net.Stream, answer: Route) !void {
+fn writeResponse(self: *Stub, stream: Io.net.Stream, answer: Route) !void {
     var write_buffer: [8192]u8 = undefined;
-    var writer = stream.writer(io, &write_buffer);
+    var writer = stream.writer(self.io, &write_buffer);
     const out = &writer.interface;
+    const slow = answer.stall.nanoseconds > 0 or answer.trickle.nanoseconds > 0;
+    if (slow and answer.stall_after == null and !self.pause(answer.stall)) {
+        return;
+    }
     const length = answer.promised_length orelse answer.body.len;
     try out.print("HTTP/1.1 {d} X\r\nContent-Type: application/json\r\n", .{answer.status});
     try out.print("Content-Length: {d}\r\nConnection: close\r\n", .{length});
@@ -436,12 +482,44 @@ fn writeResponse(io: Io, stream: Io.net.Stream, answer: Route) !void {
         try out.print("{s}: {s}\r\n", .{ header.name, header.value });
     }
     try out.writeAll("\r\n");
-    try out.writeAll(answer.body);
-    try out.flush();
+    if (slow) {
+        writeSlowly(self, out, answer) catch |err| {
+            if (err != error.StubClosing) {
+                self.mutex.lockUncancelable(self.io);
+                defer self.mutex.unlock(self.io);
+                self.hangups += 1;
+            }
+            return err;
+        };
+    } else {
+        try out.writeAll(answer.body);
+        try out.flush();
+    }
     // A promised body that is never written would leave the client waiting for
     // the rest of it, so the connection is closed instead: whoever followed the
     // redirect gets an error, and the request is on the record either way.
-    try stream.shutdown(io, .both);
+    try stream.shutdown(self.io, .both);
+}
+
+fn writeSlowly(self: *Stub, out: *Io.Writer, answer: Route) !void {
+    const first = @min(answer.stall_after orelse 0, answer.body.len);
+    try out.writeAll(answer.body[0..first]);
+    try out.flush();
+    if (answer.stall_after != null and !self.pause(answer.stall)) {
+        return error.StubClosing;
+    }
+    if (answer.trickle.nanoseconds == 0) {
+        try out.writeAll(answer.body[first..]);
+        try out.flush();
+        return;
+    }
+    for (answer.body[first..]) |byte| {
+        if (!self.pause(answer.trickle)) {
+            return error.StubClosing;
+        }
+        try out.writeByte(byte);
+        try out.flush();
+    }
 }
 
 /// A stub origin, an `Io` to reach it with, and a client pointed at it: the four

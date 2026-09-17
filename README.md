@@ -10,7 +10,7 @@ The library helps you query VPNDetection's APIs for anonymity detection includin
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/vpndetection-io/sdk-zig#v4.2.0
+zig fetch --save git+https://github.com/vpndetection-io/sdk-zig#v4.3.0
 ```
 
 Then add the module to whatever you are building, in `build.zig`:
@@ -194,6 +194,22 @@ defer result.deinit();
 The error set is `BadRequest`, `Unauthorized`, `Forbidden`, `RateLimited`, `QuotaExceeded`, `ServerError` and `Network`, plus `OutOfMemory` from the allocator.
 
 Note that `RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are not the same thing. A rate limit is when the API faces extreme traffic bursts and so retrying later works; but a spent quota needs your allowance raised or the window to roll over. The library retries rate limits for you, but not if your quota is exceeded.
+
+### Timeouts
+
+Each attempt of a call gets 30 seconds by default, from connecting to the last byte of the answer. Set your own with `timeout`, on the client or on a single call:
+
+```zig
+var client = try vpndetection.Client.init(gpa, threaded.io(), .{ .timeout = .fromSeconds(10) });
+defer client.deinit();
+
+const result = try client.lookupWith("1.1.1.1", .{ .timeout = .fromMilliseconds(500) });
+defer result.deinit();
+```
+
+A call's own value replaces the client's, longer or shorter, and `BatchOptions`, `OauthOptions` and `DeviceAuthorizationOptions` take one too. A call that runs out of time fails with `error.Network`, which is retried like any other network failure, and each retry gets the whole timeout again. A download is only held to it until object storage starts answering, so a large dataset is never cut off part way, and `pollDeviceToken` holds each request to it rather than the whole wait.
+
+The timeout needs a `std.Io` that can run a second task, such as `std.Io.Threaded`. On one that can't, a call runs without it.
 
 ### Database downloads
 

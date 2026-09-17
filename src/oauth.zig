@@ -21,6 +21,9 @@ const slow_down_step_s = 5;
 
 /// Per-call options for an `OauthApi` call.
 pub const OauthOptions = struct {
+    /// This call's own `Options.timeout`. On `pollDeviceToken` it bounds each
+    /// request, never the whole wait.
+    timeout: ?Io.Duration = null,
     /// Filled in with the status, the OAuth error code and description, and a
     /// message when the call fails.
     diagnostics: ?*Diagnostics = null,
@@ -36,6 +39,7 @@ pub const DeviceAuthorizationOptions = struct {
     scope: ?[]const u8 = null,
     /// The API the tokens are for (RFC 8707).
     resource: ?[]const u8 = null,
+    timeout: ?Io.Duration = null,
     diagnostics: ?*Diagnostics = null,
 };
 
@@ -60,6 +64,7 @@ pub const OauthApi = struct {
         const body = try http.sendOauth(&self.client.transport, self.client.gpa, self.client.io, .{
             .path = "/.well-known/oauth-authorization-server",
             .retries = self.client.retries,
+            .timeout = options.timeout orelse self.client.timeout,
             .diagnostics = diag,
         });
         defer self.client.gpa.free(body);
@@ -92,7 +97,11 @@ pub const OauthApi = struct {
                 count += 1;
             }
         }
-        const body = try self.post("/oauth/device_authorization", fields[0..count], self.client.retries, diag);
+        const body = try self.post("/oauth/device_authorization", fields[0..count], .{
+            .retries = self.client.retries,
+            .timeout = options.timeout,
+            .diagnostics = diag,
+        });
         defer self.client.gpa.free(body);
         return self.decode(DeviceAuthorization, body, diag);
     }
@@ -150,7 +159,11 @@ pub const OauthApi = struct {
             .{ .name = "token", .value = token },
             .{ .name = "client_id", .value = client_id },
         };
-        const body = try self.post("/oauth/revoke", &fields, self.client.retries, diag);
+        const body = try self.post("/oauth/revoke", &fields, .{
+            .retries = self.client.retries,
+            .timeout = options.timeout,
+            .diagnostics = diag,
+        });
         self.client.gpa.free(body);
     }
 
@@ -192,6 +205,7 @@ pub const OauthApi = struct {
                 return error.OauthExpiredToken;
             }
             const refused = if (self.exchangeDeviceCode(client_id, device.device_code, .{
+                .timeout = options.timeout,
                 .diagnostics = diag,
             })) |token|
                 return token
@@ -210,7 +224,11 @@ pub const OauthApi = struct {
     fn exchange(self: OauthApi, fields: []const Field, options: OauthOptions) OauthCallError!Parsed(TokenResponse) {
         var scratch: Diagnostics = .{};
         const diag = options.diagnostics orelse &scratch;
-        const body = try self.post("/oauth/token", fields, 0, diag);
+        const body = try self.post("/oauth/token", fields, .{
+            .retries = 0,
+            .timeout = options.timeout,
+            .diagnostics = diag,
+        });
         defer self.client.gpa.free(body);
         const wire = try self.decode(WireTokenResponse, body, diag);
         return .{ .arena = wire.arena, .value = .{
@@ -224,7 +242,7 @@ pub const OauthApi = struct {
         } };
     }
 
-    fn post(self: OauthApi, path: []const u8, fields: []const Field, retries: u32, diag: *Diagnostics) OauthCallError![]u8 {
+    fn post(self: OauthApi, path: []const u8, fields: []const Field, sending: Sending) OauthCallError![]u8 {
         const gpa = self.client.gpa;
         const form = try encodeForm(gpa, fields);
         defer gpa.free(form);
@@ -232,10 +250,17 @@ pub const OauthApi = struct {
             .method = .POST,
             .path = path,
             .form = form,
-            .retries = retries,
-            .diagnostics = diag,
+            .retries = sending.retries,
+            .timeout = sending.timeout orelse self.client.timeout,
+            .diagnostics = sending.diagnostics,
         });
     }
+
+    const Sending = struct {
+        retries: u32,
+        timeout: ?Io.Duration,
+        diagnostics: *Diagnostics,
+    };
 
     /// A 2xx body parsed into `T`. One that does not parse, or lacks a required
     /// member, is the ordinary `error.ServerError`, with the status kept.

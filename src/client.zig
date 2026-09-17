@@ -42,12 +42,19 @@ pub const Options = struct {
     concurrency: usize = 8,
     /// Further attempts a transient failure gets.
     retries: u32 = 2,
+    /// How long one attempt may take, from connecting to the last byte of the
+    /// answer; a timeout is `error.Network`, so it is retried, and each retry
+    /// gets the whole bound again. A dataset transfer is bounded only until its
+    /// response head, so a download is never cut off. Must be positive.
+    timeout: Io.Duration = .fromSeconds(30),
 };
 
 /// Per-call overrides for one request. Anything left null falls back to the
 /// client's setting.
 pub const CallOptions = struct {
     retries: ?u32 = null,
+    /// This call's own `Options.timeout`, longer or shorter.
+    timeout: ?Io.Duration = null,
     /// Filled in with the status, the wait and the API's own explanation when
     /// the call fails. A Zig error carries no payload, so this is how the
     /// detail behind one is reached.
@@ -60,6 +67,8 @@ pub const CallOptions = struct {
 /// single lookup does not compile rather than being accepted and ignored.
 pub const BatchOptions = struct {
     retries: ?u32 = null,
+    /// Bounds each chunk's attempt, as `Options.timeout` does.
+    timeout: ?Io.Duration = null,
     /// Batch requests - chunks of up to 1000 addresses - in flight for THIS
     /// batch only, so one large batch does not need a second client to widen it.
     /// Zero refuses the whole batch: every address fails with
@@ -86,6 +95,7 @@ pub const Client = struct {
     cache: ?cache_mod.Cache,
     concurrency: usize,
     retries: u32,
+    timeout: Io.Duration,
 
     pub const InitError = Allocator.Error || error{InvalidBaseUrl};
 
@@ -98,6 +108,7 @@ pub const Client = struct {
     /// The general purpose allocators in `std.heap` are.
     pub fn init(gpa: Allocator, io: Io, options: Options) InitError!Client {
         std.debug.assert(options.concurrency > 0);
+        std.debug.assert(options.timeout.nanoseconds > 0);
 
         const base_url = std.mem.trimEnd(u8, options.base_url, "/");
         const uri = std.Uri.parse(base_url) catch return error.InvalidBaseUrl;
@@ -138,6 +149,7 @@ pub const Client = struct {
             .cache = cache,
             .concurrency = options.concurrency,
             .retries = options.retries,
+            .timeout = options.timeout,
         };
     }
 
@@ -168,8 +180,8 @@ pub const Client = struct {
         return self.lookupWith(ip, .{});
     }
 
-    /// `lookup`, with this call's own retry budget and somewhere to put the
-    /// detail behind a failure.
+    /// `lookup`, with this call's own retry budget and timeout, and somewhere to
+    /// put the detail behind a failure.
     pub fn lookupWith(self: *Client, ip: []const u8, options: CallOptions) CallError!Lookup {
         var scratch: Diagnostics = .{};
         const diag = options.diagnostics orelse &scratch;
@@ -193,6 +205,7 @@ pub const Client = struct {
         const body = try http.send(&self.transport, self.gpa, self.io, .{
             .path = path.items,
             .retries = options.retries orelse self.retries,
+            .timeout = options.timeout orelse self.timeout,
             .diagnostics = diag,
         });
         defer self.gpa.free(body);
@@ -219,8 +232,8 @@ pub const Client = struct {
         return self.myIpWith(.{});
     }
 
-    /// `myIp`, with this call's own retry budget and somewhere to put the
-    /// detail behind a failure.
+    /// `myIp`, with this call's own retry budget and timeout, and somewhere to
+    /// put the detail behind a failure.
     pub fn myIpWith(self: *Client, options: CallOptions) CallError!Lookup {
         var scratch: Diagnostics = .{};
         const diag = options.diagnostics orelse &scratch;
@@ -229,6 +242,7 @@ pub const Client = struct {
         const body = try http.send(&self.transport, self.gpa, self.io, .{
             .path = "/myip",
             .retries = options.retries orelse self.retries,
+            .timeout = options.timeout orelse self.timeout,
             .diagnostics = diag,
         });
         defer self.gpa.free(body);
@@ -256,8 +270,8 @@ pub const Client = struct {
         return self.myEntitlementWith(.{});
     }
 
-    /// `myEntitlement`, with this call's own retry budget and somewhere to put
-    /// the detail behind a failure.
+    /// `myEntitlement`, with this call's own retry budget and timeout, and
+    /// somewhere to put the detail behind a failure.
     pub fn myEntitlementWith(self: *Client, options: CallOptions) CallError!Parsed(Entitlement) {
         var scratch: Diagnostics = .{};
         const diag = options.diagnostics orelse &scratch;
@@ -266,6 +280,7 @@ pub const Client = struct {
         const body = try http.send(&self.transport, self.gpa, self.io, .{
             .path = "/api/v1/entitlement",
             .retries = options.retries orelse self.retries,
+            .timeout = options.timeout orelse self.timeout,
             .diagnostics = diag,
         });
         defer self.gpa.free(body);
@@ -356,6 +371,7 @@ pub const Client = struct {
             .pending = pending.items,
             .next_chunk = .init(0),
             .retries = options.retries,
+            .timeout = options.timeout,
         };
         const chunk_count = (pending.items.len + batch_max - 1) / batch_max;
         const limit = options.concurrency orelse self.concurrency;
@@ -404,6 +420,7 @@ pub const Client = struct {
             .path = "/batch",
             .body = request_body,
             .retries = work.retries orelse self.retries,
+            .timeout = work.timeout orelse self.timeout,
             .diagnostics = diag,
         });
         defer self.gpa.free(body);
@@ -542,6 +559,7 @@ const Work = struct {
     pending: []const usize,
     next_chunk: std.atomic.Value(usize),
     retries: ?u32,
+    timeout: ?Io.Duration,
 };
 
 /// Each worker takes the next chunk until there are none left, so in-flight

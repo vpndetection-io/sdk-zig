@@ -71,6 +71,11 @@ fn examples(gpa: std.mem.Allocator) !void {
     };
     defer answer.deinit();
 
+    var bounded = try vpndetection.Client.init(gpa, threaded.io(), .{ .timeout = .fromSeconds(10) });
+    defer bounded.deinit();
+    const quick = try bounded.lookupWith("1.1.1.1", .{ .timeout = .fromMilliseconds(500) });
+    defer quick.deinit();
+
     const databases = try client.database().list(.{});
     defer databases.deinit();
     const id = databases.value[0].versions[0].id;
