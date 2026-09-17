@@ -590,7 +590,7 @@ fn storageRequests(harness: *Harness) usize {
     return count;
 }
 
-// A licence refusal is the API saying no, not a wobble: retrying it spends
+// A license refusal is the API saying no, not a wobble: retrying it spends
 // quota to be told the same thing again.
 test "a dataset the organization does not license is refused once" {
     const gpa = std.testing.allocator;

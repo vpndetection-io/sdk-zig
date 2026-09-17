@@ -213,7 +213,7 @@ The timeout needs a `std.Io` that can run a second task, such as `std.Io.Threade
 
 ### Database downloads
 
-If your key carries the `db.download` scope, the licensed databases are available through `client.database()`. A licence covers a database *family*, and you download one of its versions:
+If your key carries the `db.download` scope, the licensed databases are available through `client.database()`. A license covers a database *family*, and you download one of its versions:
 
 ```zig
 const databases = try client.database().list(.{});

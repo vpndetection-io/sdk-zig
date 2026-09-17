@@ -1,5 +1,5 @@
 //! The licensed-download half, which only the max key can reach: it is the tier
-//! holding dataset licences.
+//! holding dataset licenses.
 //!
 //! The transfer is budgeted before it starts. Metadata publishes a size per
 //! format, and that size is checked against the ceiling below FIRST, so a
@@ -23,7 +23,7 @@ const format: vpndetection.Format = .csvgz;
 /// when a transfer must not go ahead.
 const ceiling = 8 << 20;
 
-/// A real catalogue id the max organization holds no licence for.
+/// A real catalogue id the max organization holds no license for.
 const unlicensed_id = "hosting_ip_v1";
 
 test "the licensed catalogue answers the schema the client was written from" {
