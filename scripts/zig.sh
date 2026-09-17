@@ -15,8 +15,10 @@
 # ZIG_SHA256 as well, and the library is only claimed to build on the version
 # below.
 #
-# Both caches live in a named docker VOLUME rather than in the working tree, so
-# no .zig-cache or zig-out can end up in the repo or in a commit.
+# Fetched packages persist in a named docker VOLUME. The local cache stays
+# inside the container and goes with it: Zig never evicts it, so a kept one
+# grows by a whole build on every source change, and building cold adds only
+# seconds. Neither cache can end up in the working tree.
 
 set -euo pipefail
 
@@ -52,7 +54,7 @@ done
 exec docker run --rm -i \
     -v "$PWD:/work" \
     -v "${ZIG_CACHE_VOLUME}:/zig-cache" \
-    -e ZIG_LOCAL_CACHE_DIR=/zig-cache/local \
+    -e ZIG_LOCAL_CACHE_DIR=/tmp/zig-local-cache \
     -e ZIG_GLOBAL_CACHE_DIR=/zig-cache/global \
     "${env_args[@]+"${env_args[@]}"}" \
     -w "/work${ZIG_WORKDIR:+/$ZIG_WORKDIR}" \
