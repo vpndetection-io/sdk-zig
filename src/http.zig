@@ -10,6 +10,16 @@ const Io = std.Io;
 pub const retry_base_delay: Io.Duration = .fromMilliseconds(250);
 const retry_max_delay: Io.Duration = .fromSeconds(30);
 
+/// The longest timeout a call takes: `std.math.maxInt(i64)` nanoseconds, about
+/// 292 years. Near the top of `Io.Duration`'s i96 the deadline `bounded` adds
+/// to the clock overflows, which panics rather than failing the call.
+pub const max_timeout: Io.Duration = .fromNanoseconds(std.math.maxInt(i64));
+
+/// Whether an attempt could ever finish inside `timeout`.
+pub fn validTimeout(timeout: Io.Duration) bool {
+    return timeout.nanoseconds > 0 and timeout.nanoseconds <= max_timeout.nanoseconds;
+}
+
 /// One request, and what to do if it fails.
 pub const Request = struct {
     /// Whether the answer is the body or the `Location` of a redirect.
@@ -31,6 +41,12 @@ pub const Request = struct {
 /// than a throttle and is not retried at all.
 pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) CallError![]u8 {
     const diag = request.diagnostics;
+    // Zero or below, every attempt would time out before it started, so the
+    // call would fail only after the whole backoff; near the top of
+    // `Io.Duration` the deadline itself overflows and panics. Neither is sent.
+    if (!validTimeout(request.timeout)) {
+        return refuseTimeout(diag, request.timeout);
+    }
     var delay = retry_base_delay;
     var remaining = request.retries;
     while (true) {
@@ -44,6 +60,18 @@ pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) Cal
             remaining -= 1;
         }
     }
+}
+
+/// A timeout `validTimeout` rejects is the caller's mistake, refused the way
+/// the API refuses a bad argument: `error.BadRequest`, never retried.
+fn refuseTimeout(diag: *Diagnostics, timeout: Io.Duration) errors.Error {
+    diag.reset();
+    var text: [Diagnostics.max_message_len]u8 = undefined;
+    diag.setMessage(std.fmt.bufPrint(&text, "timeout must be positive and at most {d} ns, got {d} ns", .{
+        max_timeout.nanoseconds,
+        timeout.nanoseconds,
+    }) catch "timeout must be positive and at most 292 years");
+    return error.BadRequest;
 }
 
 fn attempt(transport: *Transport, gpa: Allocator, request: Request) CallError![]u8 {
@@ -147,6 +175,12 @@ pub fn sendOauth(
     request: OauthRequest,
 ) errors.OauthCallError![]u8 {
     const diag = request.diagnostics;
+    // Zero or below, every attempt would time out before it started, so the
+    // call would fail only after the whole backoff; near the top of
+    // `Io.Duration` the deadline itself overflows and panics. Neither is sent.
+    if (!validTimeout(request.timeout)) {
+        return refuseTimeout(diag, request.timeout);
+    }
     var delay = retry_base_delay;
     var remaining = request.retries;
     while (true) {
@@ -573,7 +607,11 @@ fn readRetryAfter(head: std.http.Client.Response.Head) struct { present: bool, s
             continue;
         }
         const value = std.mem.trim(u8, header.value, " \t");
-        return .{ .present = true, .seconds = std.fmt.parseInt(u64, value, 10) catch null };
+        // No wider than the i64 `Io.Duration.fromSeconds` takes: a longer wait
+        // is read like one that will not parse, rather than panicking in
+        // `backOff`.
+        const seconds: ?u64 = std.fmt.parseInt(u63, value, 10) catch null;
+        return .{ .present = true, .seconds = seconds };
     }
     return .{ .present = false, .seconds = null };
 }

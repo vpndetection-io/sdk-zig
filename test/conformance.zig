@@ -128,12 +128,18 @@ test "a 429 is classified by Retry-After, not by its status" {
             .headers = try headers.toOwnedSlice(arena),
         });
 
-        // No retries, so a retryable failure surfaces rather than looping.
-        var client = try harness.client(.{ .retries = 0 });
+        // A case that must not be retried gets retries anyway, and the request
+        // count is what shows none was spent; a retryable one gets none, so it
+        // surfaces rather than looping.
+        var client = try harness.client(.{ .retries = if (case.expect.retryable) 0 else 2 });
         defer client.deinit();
 
         var diagnostics: vpndetection.Diagnostics = .{};
         const err = errorOf(client.lookupWith("1.1.1.1", .{ .diagnostics = &diagnostics }), case.name);
+        std.testing.expectEqual(1, harness.stub.callCount()) catch |e| {
+            std.debug.print("{s}: retried\n", .{case.name});
+            return e;
+        };
         std.testing.expectEqualStrings(case.expect.kind, vpndetection.kindName(err)) catch |e| {
             std.debug.print("{s}: wrong kind\n", .{case.name});
             return e;

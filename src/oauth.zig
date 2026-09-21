@@ -22,7 +22,9 @@ const slow_down_step_s = 5;
 /// Per-call options for an `OauthApi` call.
 pub const OauthOptions = struct {
     /// This call's own `Options.timeout`. On `pollDeviceToken` it bounds each
-    /// request, never the whole wait.
+    /// request, never the whole wait. One that is not positive, or is longer
+    /// than `std.math.maxInt(i64)` nanoseconds, fails the call with
+    /// `error.BadRequest` before anything is sent.
     timeout: ?Io.Duration = null,
     /// Filled in with the status, the OAuth error code and description, and a
     /// message when the call fails.

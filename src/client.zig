@@ -45,7 +45,9 @@ pub const Options = struct {
     /// How long one attempt may take, from connecting to the last byte of the
     /// answer; a timeout is `error.Network`, so it is retried, and each retry
     /// gets the whole bound again. A dataset transfer is bounded only until its
-    /// response head, so a download is never cut off. Must be positive.
+    /// response head, so a download is never cut off. Must be positive and at
+    /// most `std.math.maxInt(i64)` nanoseconds, about 292 years, which `init`
+    /// asserts.
     timeout: Io.Duration = .fromSeconds(30),
 };
 
@@ -53,7 +55,9 @@ pub const Options = struct {
 /// client's setting.
 pub const CallOptions = struct {
     retries: ?u32 = null,
-    /// This call's own `Options.timeout`, longer or shorter.
+    /// This call's own `Options.timeout`, longer or shorter. One that is not
+    /// positive, or is longer than `std.math.maxInt(i64)` nanoseconds, fails
+    /// the call with `error.BadRequest` before anything is sent.
     timeout: ?Io.Duration = null,
     /// Filled in with the status, the wait and the API's own explanation when
     /// the call fails. A Zig error carries no payload, so this is how the
@@ -67,7 +71,10 @@ pub const CallOptions = struct {
 /// single lookup does not compile rather than being accepted and ignored.
 pub const BatchOptions = struct {
     retries: ?u32 = null,
-    /// Bounds each chunk's attempt, as `Options.timeout` does.
+    /// Bounds each chunk's attempt, as `Options.timeout` does. One that is not
+    /// positive, or is longer than `std.math.maxInt(i64)` nanoseconds, fails
+    /// every entry the batch would have sent with `error.BadRequest`, before
+    /// anything is sent; bogons and cached answers are still answered.
     timeout: ?Io.Duration = null,
     /// Batch requests - chunks of up to 1000 addresses - in flight for THIS
     /// batch only, so one large batch does not need a second client to widen it.
@@ -108,7 +115,7 @@ pub const Client = struct {
     /// The general purpose allocators in `std.heap` are.
     pub fn init(gpa: Allocator, io: Io, options: Options) InitError!Client {
         std.debug.assert(options.concurrency > 0);
-        std.debug.assert(options.timeout.nanoseconds > 0);
+        std.debug.assert(http.validTimeout(options.timeout));
 
         const base_url = std.mem.trimEnd(u8, options.base_url, "/");
         const uri = std.Uri.parse(base_url) catch return error.InvalidBaseUrl;

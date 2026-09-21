@@ -179,6 +179,29 @@ test "a rate limit is retried after the server supplied wait" {
     try std.testing.expect(waited.toMilliseconds() >= 1000);
 }
 
+// Past what `Io.Duration` counts in seconds, the header still marks a throttle,
+// but the client's own backoff decides the wait rather than a panic.
+test "a Retry-After too long to count is waited out on the client's own backoff" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/9.9.9.9", .{
+        .status = 429,
+        .body = "{\"error\":\"rate limit exceeded\"}",
+        .headers = &.{.{ .name = "Retry-After", .value = "9223372036854775808" }},
+    });
+
+    var client = try harness.client(.{ .cache = null, .retries = 1 });
+    defer client.deinit();
+    var diagnostics: vpndetection.Diagnostics = .{};
+    const started = Io.Clock.awake.now(harness.io());
+    try std.testing.expectError(error.RateLimited, client.lookupWith("9.9.9.9", .{ .diagnostics = &diagnostics }));
+
+    try std.testing.expectEqual(2, harness.stub.callCount());
+    try std.testing.expectEqual(@as(?u64, null), diagnostics.retry_after_s);
+    try std.testing.expect(started.untilNow(harness.io(), .awake).toMilliseconds() < 5000);
+}
+
 test "the API key reaches the wire as a bearer token" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
