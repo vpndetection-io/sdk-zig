@@ -10,7 +10,7 @@ The library helps you query VPNDetection's APIs for anonymity detection includin
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/vpndetection-io/sdk-zig#v4.3.1
+zig fetch --save git+https://github.com/vpndetection-io/sdk-zig#v4.3.2
 ```
 
 Then add the module to whatever you are building, in `build.zig`:
