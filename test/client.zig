@@ -202,6 +202,33 @@ test "a Retry-After too long to count is waited out on the client's own backoff"
     try std.testing.expect(started.untilNow(harness.io(), .awake).toMilliseconds() < 5000);
 }
 
+// Past 2^31 - 1 ms a `Retry-After` is read like one that will not parse: still
+// a throttle, waited out on the client's own backoff. `Io.sleep` takes any
+// wait, so 4.3.2 held the call 24.8 days for 2147484 and for good for
+// 9223372036854775807 (measured 2026-09-26). 2147483 is still waited as given,
+// which is why it is not asserted here.
+test "a Retry-After past 2^31 - 1 ms is waited out on the client's own backoff" {
+    const gpa = std.testing.allocator;
+    for ([_][]const u8{ "2147484", "9223372036854775807" }) |value| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try harness.stub.route("/9.9.9.9", .{
+            .status = 429,
+            .body = "{\"error\":\"rate limit exceeded\"}",
+            .headers = &.{.{ .name = "Retry-After", .value = value }},
+        });
+
+        var client = try harness.client(.{ .cache = null, .retries = 1 });
+        defer client.deinit();
+        var diagnostics: vpndetection.Diagnostics = .{};
+        const started = Io.Clock.awake.now(harness.io());
+        try std.testing.expectError(error.RateLimited, client.lookupWith("9.9.9.9", .{ .diagnostics = &diagnostics }));
+
+        try std.testing.expectEqual(2, harness.stub.callCount());
+        try std.testing.expect(started.untilNow(harness.io(), .awake).toMilliseconds() < 5000);
+    }
+}
+
 test "the API key reaches the wire as a bearer token" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
@@ -293,6 +320,45 @@ test "an unusable base url is refused before any request" {
 // The download endpoint answers 302 to object storage, and the dataset behind
 // it runs to gigabytes. The origin here PROMISES 8 GiB, so a client that
 // follows the redirect is caught by the request count rather than by the wait.
+// One to three trailing slashes on the base URL are dropped, never doubled into
+// a path: an unrouted `//8.8.8.8` would answer 404 here and fail the call
+// (measured 2026-09-26, every one reaching the paths below).
+test "every trailing slash on the base url is dropped" {
+    const gpa = std.testing.allocator;
+    const answer = "{\"ip\":\"8.8.8.8\",\"is_vpn\":false}";
+    for ([_][]const u8{ "/", "//", "///" }) |slashes| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try harness.stub.route("/8.8.8.8", .ok(answer));
+        try harness.stub.route("/myip", .ok(answer));
+        try harness.stub.route("/batch", .ok("{\"results\":{\"8.8.4.4\":{\"ip\":\"8.8.4.4\",\"is_vpn\":false}}}"));
+        try harness.stub.route("/api/v1/database/list", .ok("{\"databases\":[]}"));
+        try harness.stub.route("/.well-known/oauth-authorization-server", .ok(
+            \\{"issuer":"https://api.example.test","authorization_endpoint":"https://api.example.test/oauth/authorize",
+            \\"token_endpoint":"https://api.example.test/oauth/token"}
+        ));
+        var url_buffer: [64]u8 = undefined;
+        const base_url = try std.mem.concat(gpa, u8, &.{ harness.stub.baseUrl(&url_buffer), slashes });
+        defer gpa.free(base_url);
+        var client = try vpndetection.Client.init(gpa, harness.io(), .{ .base_url = base_url, .cache = null });
+        defer client.deinit();
+
+        (try client.lookup("8.8.8.8")).deinit();
+        (try client.myIp()).deinit();
+        var batch = try client.lookupBatch(&.{"8.8.4.4"}, .{});
+        batch.deinit();
+        (try client.database().list(.{})).deinit();
+        (try client.oauth().metadata(.{})).deinit();
+
+        const want = [_][]const u8{ "/8.8.8.8", "/myip", "/batch", "/api/v1/database/list", "/.well-known/oauth-authorization-server" };
+        const calls = harness.stub.seen();
+        try std.testing.expectEqual(want.len, calls.len);
+        for (want, calls) |path, call| {
+            try std.testing.expectEqualStrings(path, call.path);
+        }
+    }
+}
+
 test "downloadUrl returns the redirect rather than following it" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
@@ -571,6 +637,32 @@ test "an object storage 5xx before the first byte is retried" {
     try std.testing.expectEqual(body.len, written);
     var read_buffer: [64_000]u8 = undefined;
     try std.testing.expectEqualSlices(u8, body, try scratch.read("data.csv.gz", &read_buffer));
+}
+
+// Object storage's `Retry-After` is bounded like the API's: past 2^31 - 1 ms it
+// is waited out on the backoff, where 4.3.2 held the transfer 24.8 days for
+// 2147484 and for good for 9223372036854775807 (measured 2026-09-26).
+test "an object storage Retry-After past its bound waits the backoff" {
+    const gpa = std.testing.allocator;
+    for ([_][]const u8{ "2147484", "9223372036854775807" }) |value| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        const body = try payload(harness);
+        try routeDownload(harness, .ok(body));
+        const arena = harness.stub.arena.allocator();
+        const headers = try arena.dupe(Route.Header, &.{.{ .name = "Retry-After", .value = value }});
+        try harness.stub.sequence(storage_path, try arena.dupe(Route, &.{ .{ .status = 429, .headers = headers }, .ok(body) }));
+
+        var client = try harness.client(.{ .api_key = "key" });
+        defer client.deinit();
+        const started = Io.Clock.awake.now(harness.io());
+        const bytes = try client.database().downloadBytes("cdn_ip_v1", .csvgz, .{});
+        defer gpa.free(bytes);
+
+        try std.testing.expectEqual(2, storageRequests(harness));
+        try std.testing.expectEqualSlices(u8, body, bytes);
+        try std.testing.expect(started.untilNow(harness.io(), .awake).toMilliseconds() < 5000);
+    }
 }
 
 // A body that dies part way is NEVER fetched again: a second copy would land

@@ -153,14 +153,22 @@ pub fn bounded(
     return outcome;
 }
 
-/// Waits before another attempt: whatever the server asked for, over the
-/// caller's own doubling backoff. False when the wait was canceled, which ends
-/// the retries rather than being ignored.
+/// The longest `Retry-After` waited out as given, in whole seconds: 2^31 - 1 ms,
+/// the bound every SDK shares. `Io.sleep` takes any wait, so 2147484 held a call
+/// for 24.8 days and 9223372036854775807 for good (4.3.2, measured 2026-09-26);
+/// one past it is read like a value that will not parse, still a throttle, and
+/// waited out on the caller's own backoff.
+pub const max_retry_after_s: u64 = 2_147_483;
+
+/// Waits before another attempt: whatever the server asked for, up to
+/// `max_retry_after_s`, over the caller's own doubling backoff. False when the
+/// wait was canceled, which ends the retries rather than being ignored.
 pub fn backOff(io: Io, diag: *const Diagnostics, delay: *Io.Duration) bool {
-    const wait: Io.Duration = if (diag.retry_after_s) |seconds|
-        .fromSeconds(@intCast(seconds))
+    const asked: ?u64 = if (diag.retry_after_s) |seconds|
+        (if (seconds <= max_retry_after_s) seconds else null)
     else
-        delay.*;
+        null;
+    const wait: Io.Duration = if (asked) |seconds| .fromSeconds(@intCast(seconds)) else delay.*;
     io.sleep(wait, .awake) catch return false;
     delay.* = .fromNanoseconds(@min(delay.nanoseconds * 2, retry_max_delay.nanoseconds));
     return true;
