@@ -1,4 +1,4 @@
-//! The shared conformance corpus, generated into testdata/ by the monorepo and
+//! The shared conformance corpus, generated into testdata/ and
 //! identical across every VPNDetection SDK. It is embedded rather than read at
 //! run time so a missing or malformed corpus is a build failure.
 //!
