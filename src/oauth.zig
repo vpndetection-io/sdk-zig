@@ -193,6 +193,9 @@ pub const OauthApi = struct {
         const diag = options.diagnostics orelse &scratch;
         const io = self.client.io;
 
+        // Refused before the first wait rather than at the first exchange, an
+        // interval later, which is when 4.3.2 refused it.
+        try http.checkTimeout(diag, options.timeout orelse self.client.timeout);
         var interval_s: i64 = if (device.interval >= 1) device.interval else default_poll_interval_s;
         const deadline = Io.Clock.awake.now(io).addDuration(.fromSeconds(@max(device.expires_in, 0)));
         while (true) {

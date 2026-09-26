@@ -57,7 +57,8 @@ pub const CallOptions = struct {
     retries: ?u32 = null,
     /// This call's own `Options.timeout`, longer or shorter. One that is not
     /// positive, or is longer than `std.math.maxInt(i64)` nanoseconds, fails
-    /// the call with `error.BadRequest` before anything is sent.
+    /// the call with `error.BadRequest` before anything is sent or answered, a
+    /// bogon and a cached answer included.
     timeout: ?Io.Duration = null,
     /// Filled in with the status, the wait and the API's own explanation when
     /// the call fails. A Zig error carries no payload, so this is how the
@@ -73,8 +74,8 @@ pub const BatchOptions = struct {
     retries: ?u32 = null,
     /// Bounds each chunk's attempt, as `Options.timeout` does. One that is not
     /// positive, or is longer than `std.math.maxInt(i64)` nanoseconds, fails
-    /// every entry the batch would have sent with `error.BadRequest`, before
-    /// anything is sent; bogons and cached answers are still answered.
+    /// every address with `error.BadRequest` before anything is sent or
+    /// answered, bogons and cached answers included.
     timeout: ?Io.Duration = null,
     /// Batch requests - chunks of up to 1000 addresses - in flight for THIS
     /// batch only, so one large batch does not need a second client to widen it.
@@ -194,6 +195,10 @@ pub const Client = struct {
         const diag = options.diagnostics orelse &scratch;
         diag.reset();
 
+        // Checked before a bogon or a cached answer, which need no request:
+        // 4.3.2 answered both with any timeout at all (measured 2026-09-26).
+        const timeout = options.timeout orelse self.timeout;
+        try http.checkTimeout(diag, timeout);
         if (bogon.isBogon(ip)) {
             return lookup_mod.bogonLookup(self.gpa, ip);
         }
@@ -212,7 +217,7 @@ pub const Client = struct {
         const body = try http.send(&self.transport, self.gpa, self.io, .{
             .path = path.items,
             .retries = options.retries orelse self.retries,
-            .timeout = options.timeout orelse self.timeout,
+            .timeout = timeout,
             .diagnostics = diag,
         });
         defer self.gpa.free(body);
@@ -329,7 +334,21 @@ pub const Client = struct {
     ) Allocator.Error!Batch {
         var batch: Batch = .{ .gpa = self.gpa };
         errdefer batch.deinit();
-        const refused = if (options.concurrency) |n| n == 0 else false;
+        // A concurrency of zero, or a timeout no attempt can meet, refuses every
+        // address, a bogon and a cached answer included: 4.3.2 still answered
+        // those two with an impossible timeout (measured 2026-09-26).
+        var refusal: ?Batch.Failure = null;
+        if (options.concurrency) |n| if (n == 0) {
+            var failure: Batch.Failure = .{ .err = error.BadRequest };
+            failure.diagnostics.setMessage("concurrency must be at least 1");
+            refusal = failure;
+        };
+        const timeout = options.timeout orelse self.timeout;
+        if (refusal == null and !http.validTimeout(timeout)) {
+            var failure: Batch.Failure = .{ .err = error.BadRequest };
+            failure.err = http.refuseTimeout(&failure.diagnostics, timeout);
+            refusal = failure;
+        }
         // The indexes of the entries that go to the API; a bogon or a cached
         // answer is filled in here and never sent.
         var pending: std.ArrayList(usize) = .empty;
@@ -344,9 +363,7 @@ pub const Client = struct {
                 try batch.entries.put(self.gpa, key, .{ .failed = .{ .err = error.Network } });
             }
             const index = batch.entries.count() - 1;
-            if (refused) {
-                var failure: Batch.Failure = .{ .err = error.BadRequest };
-                failure.diagnostics.setMessage("concurrency must be at least 1");
+            if (refusal) |failure| {
                 batch.entries.values()[index] = .{ .failed = failure };
                 continue;
             }

@@ -62,9 +62,19 @@ pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) Cal
     }
 }
 
+/// Refuses a timeout `validTimeout` rejects. `send` and `sendOauth` run it on
+/// every request; a call that can answer without one - a bogon, a cached
+/// answer, the poll's first wait - runs it first, or the bad value would pass
+/// whenever no request happened to be needed.
+pub fn checkTimeout(diag: *Diagnostics, timeout: Io.Duration) errors.Error!void {
+    if (!validTimeout(timeout)) {
+        return refuseTimeout(diag, timeout);
+    }
+}
+
 /// A timeout `validTimeout` rejects is the caller's mistake, refused the way
 /// the API refuses a bad argument: `error.BadRequest`, never retried.
-fn refuseTimeout(diag: *Diagnostics, timeout: Io.Duration) errors.Error {
+pub fn refuseTimeout(diag: *Diagnostics, timeout: Io.Duration) errors.Error {
     diag.reset();
     var text: [Diagnostics.max_message_len]u8 = undefined;
     diag.setMessage(std.fmt.bufPrint(&text, "timeout must be positive and at most {d} ns, got {d} ns", .{
