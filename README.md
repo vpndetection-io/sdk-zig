@@ -1,4 +1,4 @@
-# [<img src="https://s3.vpndetection.io/vpndetection-public/brand/mark.svg" alt="VPNDetection" width="24"/>](https://vpndetection.io/) VPNDetection Zig Client Library
+# [<img src="https://s3.vpndetection.io/vpndetection-public/brand/mark.svg" alt="VPNDetection" height="28"/>](https://vpndetection.io/) VPNDetection Zig Client Library
 
 [![CI](https://github.com/vpndetection-io/sdk-zig/actions/workflows/ci.yml/badge.svg)](https://github.com/vpndetection-io/sdk-zig/actions/workflows/ci.yml)
 [![license](https://img.shields.io/github/license/vpndetection-io/sdk-zig.svg)](LICENSE)
