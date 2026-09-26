@@ -368,6 +368,32 @@ test "the poll waits on the real clock" {
     try std.testing.expectEqualStrings("mo_at_poll", token.value.access_token);
 }
 
+// A `slow_down` at the top of an i64 interval: `interval += 5` panicked with
+// integer overflow in 4.3.2. It saturates, and the wait after it ends at the
+// deadline rather than a full interval later.
+test "a slow_down at the top of the interval saturates" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.sequence("/oauth/token", &.{.{ .status = 400, .body = "{\"error\":\"slow_down\"}" }});
+    var url_buffer: [64]u8 = undefined;
+    var client = try vpndetection.Client.init(gpa, FakeClock.install(harness.io()), .{
+        .base_url = harness.stub.baseUrl(&url_buffer),
+    });
+    defer client.deinit();
+
+    const max = std.math.maxInt(i64);
+    try std.testing.expectError(error.OauthExpiredToken, client.oauth().pollDeviceToken(client_id, .{
+        .device_code = "mo_dc_x",
+        .user_code = "BCDF-GHJK",
+        .verification_uri = "https://app.example.test/device",
+        .expires_in = max,
+        .interval = max - 2,
+    }, .{}));
+    try std.testing.expectEqual(1, harness.stub.seen().len);
+    try std.testing.expectEqualSlices(i64, &.{ max - 2, 2 }, FakeClock.waitsInSeconds());
+}
+
 /// A `std.Io` whose `sleep` records the wait and returns at once, and whose
 /// clock reads the sum of those waits, over a real `Io` for everything else.
 /// Global state, because a vtable function receives only the real `Io`'s

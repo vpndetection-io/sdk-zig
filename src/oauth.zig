@@ -199,7 +199,13 @@ pub const OauthApi = struct {
         var interval_s: i64 = if (device.interval >= 1) device.interval else default_poll_interval_s;
         const deadline = Io.Clock.awake.now(io).addDuration(.fromSeconds(@max(device.expires_in, 0)));
         while (true) {
-            io.sleep(.fromSeconds(interval_s), .awake) catch |err| {
+            // No wait runs past the deadline: an interval ending after it sleeps
+            // only the time left, and the expiry follows with nothing sent. In
+            // full, an `interval` of 2147483647 held a poll with seconds left for
+            // 68 years (4.3.2, measured 2026-09-26).
+            const left = Io.Clock.awake.now(io).durationTo(deadline).nanoseconds;
+            const wait = @max(@min(Io.Duration.fromSeconds(interval_s).nanoseconds, left), 0);
+            io.sleep(.fromNanoseconds(wait), .awake) catch |err| {
                 diag.reset();
                 diag.setMessage(@errorName(err));
                 return error.Network;
@@ -219,7 +225,8 @@ pub const OauthApi = struct {
                 else => return err,
             };
             if (std.mem.eql(u8, refused, "slow_down")) {
-                interval_s += slow_down_step_s;
+                // Saturates: at the top of an i64 a plain `+=` panics.
+                interval_s +|= slow_down_step_s;
             } else if (!std.mem.eql(u8, refused, "authorization_pending")) {
                 return error.OauthRejected;
             }
