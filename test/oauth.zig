@@ -517,11 +517,6 @@ fn expectMembers(
     absent: []const []const u8,
 ) !void {
     for (present.map.keys(), present.map.values()) |member, want| {
-        // Still in the corpus's metadata document, no longer served, and not a
-        // member of this release's type (sdk-go 14e52de skips it too).
-        if (std.mem.eql(u8, member, "client_id_metadata_document_supported")) {
-            continue;
-        }
         expectMember(value, member, want) catch |err| {
             std.debug.print("{s}: {s}\n", .{ name, member });
             return err;
