@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.4.0 - 2026-09-27
+
+### Features
+
+- Re-pin the spec to 2026.09.26, adding client_id_metadata_document_supported ([`a755063`](https://github.com/vpndetection-io/sdk-zig/commit/a755063e66c86355db59cdb62ed1ba30d9bcaf11))
+
 ## 4.3.3 - 2026-09-26
 
 ### Fixes
