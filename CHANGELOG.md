@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.4.1 - 2026-09-30
+
+### Fixes
+
+- Judge an IPv4-mapped address as the IPv4 address it carries ([`9525491`](https://github.com/vpndetection-io/sdk-zig/commit/9525491a07d8fc42fff554379327d6130d74ae2b))
+- Recognize 26 more reserved ranges as bogons, as the API does ([`4dc1fd8`](https://github.com/vpndetection-io/sdk-zig/commit/4dc1fd8eb449c05e825c9ff047d4f19565ad166f))
+
 ## 4.4.0 - 2026-09-27
 
 ### Features
