@@ -503,6 +503,44 @@ test "a batch keeps its own copy of the addresses it was given" {
     try std.testing.expect(batch.get("1.1.1.1") != null);
 }
 
+// Every entry owns its answer, so an address asked under two spellings is two
+// answers from one request: sharing one would free it twice.
+test "a batch sends an address asked under several spellings once and answers each" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.routeLookup("8.8.8.8");
+
+    const input = [_][]const u8{ "::ffff:8.8.8.8", "::ffff:808:808", "8.8.8.8", "::ffff:10.0.0.1", "::FFFF:10.0.0.1", "10.0.0.1" };
+    for ([_]?vpndetection.CacheOptions{ .{}, null }) |cache| {
+        var client = try harness.client(.{ .cache = cache });
+        defer client.deinit();
+        const before = harness.stub.callCount();
+        var batch = try client.lookupBatch(&input, .{});
+        defer batch.deinit();
+
+        try std.testing.expectEqual(input.len, batch.count());
+        for (input, batch.keys()) |want, got| {
+            try std.testing.expectEqualStrings(want, got);
+        }
+        for (input[0..3]) |ip| {
+            const answer = batch.get(ip).?.ok;
+            try std.testing.expectEqualStrings("8.8.8.8", answer.value.ip);
+            try std.testing.expect(!answer.is_bogon);
+        }
+        for (input[3..]) |ip| {
+            const answer = batch.get(ip).?.ok;
+            try std.testing.expectEqualStrings("10.0.0.1", answer.value.ip);
+            try std.testing.expect(answer.is_bogon);
+        }
+        try std.testing.expectEqual(before + 1, harness.stub.callCount());
+        const sent = try std.json.parseFromSlice(struct { ips: []const []const u8 }, gpa, harness.stub.seen()[before].body, .{});
+        defer sent.deinit();
+        try std.testing.expectEqual(1, sent.value.ips.len);
+        try std.testing.expectEqualStrings("8.8.8.8", sent.value.ips[0]);
+    }
+}
+
 /// A stub dataset: gzip's magic so a test can tell real bytes from a truncated
 /// or re-encoded copy, and enough of them that a single-chunk transfer is not
 /// what makes the test pass.

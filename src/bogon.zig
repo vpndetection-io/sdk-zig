@@ -11,10 +11,14 @@ const bogons = @import("bogons.zig");
 /// a bogon: the API is the authority on what is a valid address, and answering
 /// `false` is what sends it there.
 pub fn isBogon(ip: []const u8) bool {
-    // A 4-in-6 form (::ffff:10.0.0.1) is tested against the v6 table, matching
-    // every other binding: the colon decides the family, not the notation.
     if (std.mem.indexOfScalar(u8, ip, ':') != null) {
         const addr = parseV6(ip) orelse return false;
+        // An IPv4-mapped address is judged as the IPv4 address it carries. What
+        // is left is IPv6, the IPv4-compatible ::a.b.c.d included, which stays
+        // inside ::/96.
+        if (mappedV4(addr)) |v4| {
+            return isV4Bogon(v4);
+        }
         for (v6_ranges) |range| {
             if (addr & range.mask == range.net) {
                 return true;
@@ -22,7 +26,38 @@ pub fn isBogon(ip: []const u8) bool {
         }
         return false;
     }
-    const addr = parseV4(ip) orelse return false;
+    return isV4Bogon(parseV4(ip) orelse return false);
+}
+
+/// The longest address `unmapped` writes, `255.255.255.255`.
+pub const max_unmapped_len = 15;
+
+/// The IPv4 address an IPv4-mapped IPv6 address (`::ffff:a.b.c.d`, in any
+/// spelling) carries, written into `buffer`, and any other string as given.
+///
+/// A server listening on `::` sees every IPv4 visitor in that form, which read
+/// whole is inside `::ffff:0:0/96`, so judging it whole would answer every such
+/// visitor locally as a bogon. `::a.b.c.d` is IPv4-compatible rather than
+/// mapped, and stays IPv6.
+pub fn unmapped(ip: []const u8, buffer: *[max_unmapped_len]u8) []const u8 {
+    if (std.mem.indexOfScalar(u8, ip, ':') == null) {
+        return ip;
+    }
+    const v4 = mappedV4(parseV6(ip) orelse return ip) orelse return ip;
+    return std.fmt.bufPrint(buffer, "{d}.{d}.{d}.{d}", .{
+        v4 >> 24,
+        (v4 >> 16) & 0xff,
+        (v4 >> 8) & 0xff,
+        v4 & 0xff,
+    }) catch unreachable;
+}
+
+/// The IPv4 half of an address in `::ffff:0:0/96`.
+fn mappedV4(addr: u128) ?u32 {
+    return if (addr >> 32 == 0xffff) @truncate(addr) else null;
+}
+
+fn isV4Bogon(addr: u32) bool {
     for (v4_ranges) |range| {
         if (addr & range.mask == range.net) {
             return true;
@@ -176,13 +211,22 @@ test "every generated range is reachable through the predicate" {
     }
 }
 
-test "a 4-in-6 form is answered by the v6 table" {
-    // ::ffff:0:0/96 is itself a canonical range, so an IPv4-mapped address is a
-    // bogon whatever it wraps. The colon decides the family, never the notation,
-    // which is what keeps this binding agreeing with the others.
+test "an IPv4-mapped address is judged as the IPv4 address it carries" {
     try std.testing.expect(isBogon("::ffff:10.0.0.1"));
-    try std.testing.expect(isBogon("::ffff:8.8.8.8"));
+    try std.testing.expect(!isBogon("::ffff:8.8.8.8"));
     try std.testing.expect(!isBogon("8.8.8.8"));
+    // IPv4-compatible, not mapped: stays IPv6, inside ::/96.
+    try std.testing.expect(isBogon("::8.8.8.8"));
+}
+
+test "unmapped writes the carried address and passes anything else through" {
+    var buffer: [max_unmapped_len]u8 = undefined;
+    try std.testing.expectEqualStrings("8.8.8.8", unmapped("::ffff:8.8.8.8", &buffer));
+    try std.testing.expectEqualStrings("8.8.8.8", unmapped("0:0:0:0:0:FFFF:808:808", &buffer));
+    try std.testing.expectEqualStrings("255.255.255.255", unmapped("::ffff:ffff:ffff", &buffer));
+    try std.testing.expectEqualStrings("::8.8.8.8", unmapped("::8.8.8.8", &buffer));
+    try std.testing.expectEqualStrings("2001:db8::1", unmapped("2001:db8::1", &buffer));
+    try std.testing.expectEqualStrings("notanip", unmapped("notanip", &buffer));
 }
 
 test "an address that will not parse is not a bogon" {

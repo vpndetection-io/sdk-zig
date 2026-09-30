@@ -25,6 +25,59 @@ test "isBogon matches the canonical ranges" {
     }
 }
 
+// A server listening on :: sees every IPv4 visitor as ::ffff:a.b.c.d. Read whole
+// that is inside ::ffff:0:0/96, so an SDK that did not unmap answered each one
+// locally as a bogon.
+test "an IPv4-mapped address is the IPv4 address it carries" {
+    const gpa = std.testing.allocator;
+    const data = try corpus.load(gpa);
+    defer data.deinit();
+
+    for (data.value.ipv4Mapped) |case| {
+        errdefer std.debug.print("{s} carries {s} ({s})\n", .{ case.ip, case.carries, case.why });
+        try std.testing.expectEqual(case.expect, vpndetection.isBogon(case.ip));
+
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try harness.stub.routeLookup(case.carries);
+        var client = try harness.client(.{ .retries = 0 });
+        defer client.deinit();
+
+        const result = try client.lookup(case.ip);
+        defer result.deinit();
+        try std.testing.expectEqualStrings(case.carries, result.value.ip);
+        try std.testing.expectEqual(case.expect, result.is_bogon);
+        if (case.expect) {
+            try std.testing.expectEqual(0, harness.stub.callCount());
+        } else {
+            try std.testing.expect(harness.stub.calledOnly(try harness.stub.printed("/{s}", .{case.carries})));
+            const again = try client.lookup(case.carries);
+            defer again.deinit();
+            try std.testing.expectEqual(1, harness.stub.callCount());
+        }
+
+        // The mapped form alone: asked beside its plain form, a batch that sent
+        // the address as given would still have been answered for the plain one.
+        var fresh = try harness.client(.{ .retries = 0 });
+        defer fresh.deinit();
+        const before = harness.stub.callCount();
+        var batch = try fresh.lookupBatch(&.{case.ip}, .{});
+        defer batch.deinit();
+        try std.testing.expectEqual(1, batch.count());
+        try std.testing.expectEqualStrings(case.ip, batch.keys()[0]);
+        try std.testing.expectEqualStrings(case.carries, batch.get(case.ip).?.ok.value.ip);
+        if (case.expect) {
+            try std.testing.expectEqual(before, harness.stub.callCount());
+        } else {
+            try std.testing.expectEqual(before + 1, harness.stub.callCount());
+            const sent = try std.json.parseFromSlice(struct { ips: []const []const u8 }, gpa, harness.stub.seen()[before].body, .{});
+            defer sent.deinit();
+            try std.testing.expectEqual(1, sent.value.ips.len);
+            try std.testing.expectEqualStrings(case.carries, sent.value.ips[0]);
+        }
+    }
+}
+
 test "a bogon is answered locally in the full max shape" {
     const gpa = std.testing.allocator;
     const data = try corpus.load(gpa);

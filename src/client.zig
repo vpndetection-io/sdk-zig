@@ -199,11 +199,14 @@ pub const Client = struct {
         // 4.3.2 answered both with any timeout at all (measured 2026-09-26).
         const timeout = options.timeout orelse self.timeout;
         try http.checkTimeout(diag, timeout);
-        if (bogon.isBogon(ip)) {
-            return lookup_mod.bogonLookup(self.gpa, ip);
+        // Judged, cached and sent as the IPv4 address it carries, if it is mapped.
+        var buffer: [bogon.max_unmapped_len]u8 = undefined;
+        const carried = bogon.unmapped(ip, &buffer);
+        if (bogon.isBogon(carried)) {
+            return lookup_mod.bogonLookup(self.gpa, carried);
         }
         if (self.cache) |*cache| {
-            if (try cache.get(self.io, ip, self.gpa)) |cached| {
+            if (try cache.get(self.io, carried, self.gpa)) |cached| {
                 defer self.gpa.free(cached);
                 return self.parse(cached, diag);
             }
@@ -212,7 +215,7 @@ pub const Client = struct {
         var path: std.ArrayList(u8) = .empty;
         defer path.deinit(self.gpa);
         try path.append(self.gpa, '/');
-        try http.appendEncoded(self.gpa, &path, ip);
+        try http.appendEncoded(self.gpa, &path, carried);
 
         const body = try http.send(&self.transport, self.gpa, self.io, .{
             .path = path.items,
@@ -224,7 +227,7 @@ pub const Client = struct {
 
         const result = try self.parse(body, diag);
         if (self.cache) |*cache| {
-            cache.put(self.io, ip, body);
+            cache.put(self.io, carried, body);
         }
         return result;
     }
@@ -349,6 +352,24 @@ pub const Client = struct {
             failure.err = http.refuseTimeout(&failure.diagnostics, timeout);
             refusal = failure;
         }
+        // An IPv4-mapped address is judged, cached and sent as the address it
+        // carries, once however many of its spellings were asked. `carried[i]`
+        // is that address for entry i, and an entry whose carried address an
+        // earlier one already has is a follower, given its own copy of that
+        // entry's answer once the batch is done.
+        var carried: std.ArrayList([]const u8) = .empty;
+        defer carried.deinit(self.gpa);
+        var owned: std.ArrayList([]const u8) = .empty;
+        defer {
+            for (owned.items) |text| {
+                self.gpa.free(text);
+            }
+            owned.deinit(self.gpa);
+        }
+        var leaders: std.StringHashMapUnmanaged(usize) = .empty;
+        defer leaders.deinit(self.gpa);
+        var followers: std.ArrayList(Follower) = .empty;
+        defer followers.deinit(self.gpa);
         // The indexes of the entries that go to the API; a bogon or a cached
         // answer is filled in here and never sent.
         var pending: std.ArrayList(usize) = .empty;
@@ -363,16 +384,31 @@ pub const Client = struct {
                 try batch.entries.put(self.gpa, key, .{ .failed = .{ .err = error.Network } });
             }
             const index = batch.entries.count() - 1;
+            var buffer: [bogon.max_unmapped_len]u8 = undefined;
+            const text = bogon.unmapped(key, &buffer);
+            const address = if (text.ptr == key.ptr) key else blk: {
+                const copy = try self.gpa.dupe(u8, text);
+                errdefer self.gpa.free(copy);
+                try owned.append(self.gpa, copy);
+                break :blk copy;
+            };
+            try carried.append(self.gpa, address);
+            const leader = try leaders.getOrPut(self.gpa, address);
+            if (leader.found_existing) {
+                try followers.append(self.gpa, .{ .index = index, .leader = leader.value_ptr.* });
+                continue;
+            }
+            leader.value_ptr.* = index;
             if (refusal) |failure| {
                 batch.entries.values()[index] = .{ .failed = failure };
                 continue;
             }
-            if (bogon.isBogon(key)) {
-                batch.entries.values()[index] = .{ .ok = try lookup_mod.bogonLookup(self.gpa, key) };
+            if (bogon.isBogon(address)) {
+                batch.entries.values()[index] = .{ .ok = try lookup_mod.bogonLookup(self.gpa, address) };
                 continue;
             }
             if (self.cache) |*cache| {
-                if (try cache.get(self.io, key, self.gpa)) |cached| {
+                if (try cache.get(self.io, address, self.gpa)) |cached| {
                     defer self.gpa.free(cached);
                     var diag: Diagnostics = .{};
                     batch.entries.values()[index] = if (self.parse(cached, &diag)) |answer|
@@ -385,12 +421,13 @@ pub const Client = struct {
             try pending.append(self.gpa, index);
         }
         if (pending.items.len == 0) {
+            try self.answerFollowers(batch.entries.values(), followers.items);
             return batch;
         }
 
         var work: Work = .{
             .client = self,
-            .keys = batch.entries.keys(),
+            .keys = carried.items,
             .entries = batch.entries.values(),
             .pending = pending.items,
             .next_chunk = .init(0),
@@ -414,7 +451,30 @@ pub const Client = struct {
         for (helpers[0..spawned]) |*helper| {
             _ = helper.await(self.io);
         }
+        try self.answerFollowers(batch.entries.values(), followers.items);
         return batch;
+    }
+
+    /// Gives each address asked under a second spelling of a carried address
+    /// the answer the first spelling got. Every entry owns its `Lookup`, so a
+    /// served answer is parsed again from its body and a bogon is made again.
+    fn answerFollowers(self: *Client, entries: []Batch.Entry, followers: []const Follower) Allocator.Error!void {
+        for (followers) |follower| {
+            entries[follower.index] = switch (entries[follower.leader]) {
+                .failed => |failure| .{ .failed = failure },
+                .ok => |answer| if (answer.is_bogon)
+                    .{ .ok = try lookup_mod.bogonLookup(self.gpa, answer.value.ip) }
+                else blk: {
+                    var diag: Diagnostics = .{};
+                    break :blk if (self.parse(answer.raw, &diag)) |copy|
+                        .{ .ok = copy }
+                    else |err| switch (err) {
+                        error.OutOfMemory => return error.OutOfMemory,
+                        else => .{ .failed = .{ .err = err, .diagnostics = diag } },
+                    };
+                },
+            };
+        }
     }
 
     /// One `POST /batch`, mapped back onto the addresses it was asked about. A
@@ -575,8 +635,15 @@ pub const Batch = struct {
     }
 };
 
+/// A batch entry whose carried address an earlier entry was asked under.
+const Follower = struct {
+    index: usize,
+    leader: usize,
+};
+
 const Work = struct {
     client: *Client,
+    /// What each entry is sent as: the address it carries.
     keys: []const []const u8,
     entries: []Batch.Entry,
     /// The indexes of the entries still to be answered, chunked by position.

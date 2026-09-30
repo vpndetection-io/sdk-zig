@@ -16,6 +16,7 @@ const source = @embedFile("corpus");
 
 pub const Corpus = struct {
     isBogon: []const BogonCase,
+    ipv4Mapped: []const MappedCase,
     bogonResponse: BogonResponse,
     lookup: []const LookupCase,
     errors: []const ErrorCase,
@@ -35,6 +36,13 @@ pub const Corpus = struct {
 
 pub const BogonCase = struct {
     ip: []const u8,
+    expect: bool,
+    why: []const u8,
+};
+
+pub const MappedCase = struct {
+    ip: []const u8,
+    carries: []const u8,
     expect: bool,
     why: []const u8,
 };
