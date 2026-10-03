@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.4.2 - 2026-10-03
+
+### Fixes
+
+- Share one request per address across lookups and batches ([`c40ee03`](https://github.com/vpndetection-io/sdk-zig/commit/c40ee0394c5a0a054340450b80566859400311e4))
+
 ## 4.4.1 - 2026-09-30
 
 ### Fixes
