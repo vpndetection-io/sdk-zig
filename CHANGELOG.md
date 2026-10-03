@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.5.0 - 2026-10-03
+
+### Features
+
+- Add the authorization code sign-in, with PKCE ([`37758e4`](https://github.com/vpndetection-io/sdk-zig/commit/37758e4f990a59690485d04986f1f100b6f83fdc))
+
 ## 4.4.2 - 2026-10-03
 
 ### Fixes
