@@ -111,9 +111,8 @@ pub const Bogons = struct {
     v6: []const []const u8,
 };
 
-/// The `oauth` section. `deferred` names operations this release does not ship,
-/// so it is never declared here and the loader skips it with every other
-/// unknown member.
+/// The `oauth` section. `deferred` holds the authorization code flow's
+/// vectors, whose form and retry cases join the main ones' loops.
 pub const Oauth = struct {
     endpoints: struct {
         metadata: Endpoint,
@@ -139,6 +138,29 @@ pub const Oauth = struct {
     errors: struct { cases: []const OauthErrorCase },
     retries: struct { cases: []const RetryCase },
     poll: struct { cases: []const PollCase },
+    deferred: struct {
+        pkce: struct {
+            verifier: []const u8,
+            challenge: []const u8,
+            method: []const u8,
+            generatedVerifierPattern: []const u8,
+        },
+        authorizationUrl: []const AuthorizationUrlCase,
+        forms: []const FormCase,
+        retries: []const RetryCase,
+    },
+};
+
+pub const AuthorizationUrlCase = struct {
+    name: []const u8,
+    baseUrl: []const u8,
+    clientId: []const u8,
+    redirectUri: []const u8,
+    codeChallenge: []const u8,
+    scope: ?[]const u8 = null,
+    state: ?[]const u8 = null,
+    resource: ?[]const u8 = null,
+    expect: []const u8,
 };
 
 pub const Endpoint = struct { method: []const u8, path: []const u8 };
@@ -150,6 +172,9 @@ pub const OauthArgs = struct {
     deviceCode: ?[]const u8 = null,
     refreshToken: ?[]const u8 = null,
     token: ?[]const u8 = null,
+    code: ?[]const u8 = null,
+    codeVerifier: ?[]const u8 = null,
+    redirectUri: ?[]const u8 = null,
 };
 
 pub const FormCase = struct {

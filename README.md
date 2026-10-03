@@ -258,6 +258,25 @@ defer keyed.deinit();
 
 A denied sign-in fails with `error.OauthAccessDenied` and a code that ran out with `error.OauthExpiredToken`. Client IDs are issued on request from support@vpndetection.io, and `client.oauth().revoke("your-client-id", refresh_token, .{})` signs the machine out again.
 
+### Sign in with OAuth (authorization code)
+
+An app that can take a browser redirect signs the person in there instead, with a PKCE pair made for that one sign-in:
+
+```zig
+var client = try vpndetection.Client.init(gpa, threaded.io(), .{});
+defer client.deinit();
+const redirect_uri = "http://127.0.0.1:8765/callback";
+const pkce = client.oauth().createPkce();
+
+const url = try client.oauth().authorizationUrl("your-client-id", redirect_uri, &pkce.challenge, .{ .scope = "apikeys.use", .state = "your-state" });
+defer gpa.free(url);
+// Open url in the browser. Its redirect to redirect_uri carries code and state.
+const token = try client.oauth().exchangeAuthorizationCode("your-client-id", code, &pkce.verifier, redirect_uri, .{});
+defer token.deinit();
+```
+
+Check that `state` came back as you sent it before you exchange `code`, which works once. The client ID can also be the https URL of a client metadata document your app serves, and such an app is never handed a key, so `token.value.apikey` stays `null`.
+
 ### Absent is not false
 
 Every field beyond `ip` and `is_vpn` is optional, because your plan decides which of them the API sends. `null` means "not in your plan", not "checked, and no".

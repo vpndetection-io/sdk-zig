@@ -52,9 +52,23 @@ test "no OAuth request carries the API key" {
     (try oauth.exchangeRefreshToken(client_id, "mo_rt_x", .{})).deinit();
     try oauth.revoke(client_id, "mo_rt_x", .{});
     (try oauth.pollDeviceToken(client_id, device.value, .{})).deinit();
+    (try oauth.exchangeAuthorizationCode(client_id, "mo_ac_x", "v", "http://127.0.0.1:8765/cb", .{})).deinit();
+    const url = try oauth.authorizationUrl(client_id, "http://127.0.0.1:8765/cb", "c", .{
+        .scope = "apikeys.use",
+        .state = "s",
+        .resource = "https://x.test/",
+    });
+    defer gpa.free(url);
+    try std.testing.expect(std.mem.indexOf(u8, url, credential.apiKey) == null);
+    for (credential.forbiddenQuery) |forbidden| {
+        var pairs = std.mem.splitScalar(u8, url[std.mem.indexOfScalar(u8, url, '?').? + 1 ..], '&');
+        while (pairs.next()) |pair| {
+            try std.testing.expect(!std.mem.eql(u8, pair[0 .. std.mem.indexOfScalar(u8, pair, '=') orelse pair.len], forbidden));
+        }
+    }
 
     const calls = harness.stub.seen();
-    try std.testing.expectEqual(6, calls.len);
+    try std.testing.expectEqual(7, calls.len);
     for (calls) |call| {
         for (credential.forbiddenHeaders) |name| {
             if (call.header(name)) |value| {
@@ -82,8 +96,10 @@ test "each form goes to its endpoint with exactly its fields" {
     const data = try corpus.load(gpa);
     defer data.deinit();
     const oauth_data = data.value.oauth;
+    const cases = try std.mem.concat(gpa, corpus.FormCase, &.{ oauth_data.forms.cases, oauth_data.deferred.forms });
+    defer gpa.free(cases);
 
-    for (oauth_data.forms.cases) |case| {
+    for (cases) |case| {
         const harness = try Harness.start(gpa);
         defer harness.deinit();
         try routeEveryPath(harness, .ok(every_required_member));
@@ -211,8 +227,10 @@ test "only the calls that consume nothing are retried" {
     const data = try corpus.load(gpa);
     defer data.deinit();
     const oauth_data = data.value.oauth;
+    const cases = try std.mem.concat(gpa, corpus.RetryCase, &.{ oauth_data.retries.cases, oauth_data.deferred.retries });
+    defer gpa.free(cases);
 
-    for (oauth_data.retries.cases) |case| {
+    for (cases) |case| {
         const harness = try Harness.start(gpa);
         defer harness.deinit();
         const path = endpointNamed(oauth_data, endpointOf(case.operation)).path;
@@ -571,6 +589,82 @@ fn expectValue(comptime T: type, got: T, want: std.json.Value) !void {
     }
 }
 
+// RFC 7636's vector, then generated pairs: 43 characters of base64url, each its
+// own challenge, never the same verifier twice.
+test "a PKCE pair matches the RFC vector and is never reused" {
+    const gpa = std.testing.allocator;
+    const data = try corpus.load(gpa);
+    defer data.deinit();
+    const vector = data.value.oauth.deferred.pkce;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    var client = try harness.client(.{});
+    defer client.deinit();
+    const oauth = client.oauth();
+
+    try std.testing.expectEqualStrings(vector.challenge, &oauth.pkceChallenge(vector.verifier));
+    // The corpus states the pattern; this checks the one it states today.
+    try std.testing.expectEqualStrings("^[A-Za-z0-9_-]{43}$", vector.generatedVerifierPattern);
+    const pairs = [_]vpndetection.Pkce{ oauth.createPkce(), oauth.createPkce() };
+    for (pairs) |pair| {
+        for (pair.verifier) |c| {
+            try std.testing.expect(std.ascii.isAlphanumeric(c) or c == '-' or c == '_');
+        }
+        try std.testing.expectEqualStrings(&oauth.pkceChallenge(&pair.verifier), &pair.challenge);
+        try std.testing.expectEqualStrings(vector.method, pair.method);
+    }
+    try std.testing.expect(!std.mem.eql(u8, &pairs[0].verifier, &pairs[1].verifier));
+}
+
+test "the authorization URL is built exactly and sends nothing" {
+    const gpa = std.testing.allocator;
+    const data = try corpus.load(gpa);
+    defer data.deinit();
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+
+    for (data.value.oauth.deferred.authorizationUrl) |case| {
+        var client = try vpndetection.Client.init(gpa, harness.io(), .{ .base_url = case.baseUrl });
+        defer client.deinit();
+        const url = try client.oauth().authorizationUrl(case.clientId, case.redirectUri, case.codeChallenge, .{
+            .scope = case.scope,
+            .state = case.state,
+            .resource = case.resource,
+        });
+        defer gpa.free(url);
+        std.testing.expectEqualStrings(case.expect, url) catch |err| {
+            std.debug.print("{s}\n", .{case.name});
+            return err;
+        };
+    }
+
+    try routeEveryPath(harness, .ok(every_required_member));
+    var client = try harness.client(.{});
+    defer client.deinit();
+    const url = try client.oauth().authorizationUrl(client_id, "http://127.0.0.1:8765/cb", "c", .{});
+    defer gpa.free(url);
+    try std.testing.expectEqual(0, harness.stub.callCount());
+}
+
+test "an empty option is left out, and an empty or non-UTF-8 value refused" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    var client = try harness.client(.{});
+    defer client.deinit();
+    const oauth = client.oauth();
+
+    const bare = try oauth.authorizationUrl("c", "https://app.example/cb", "x", .{});
+    defer gpa.free(bare);
+    const empty = try oauth.authorizationUrl("c", "https://app.example/cb", "x", .{ .scope = "", .state = "", .resource = "" });
+    defer gpa.free(empty);
+    try std.testing.expectEqualStrings(bare, empty);
+    try std.testing.expectError(error.BadRequest, oauth.authorizationUrl("", "r", "x", .{}));
+    try std.testing.expectError(error.BadRequest, oauth.authorizationUrl("c", "", "x", .{}));
+    try std.testing.expectError(error.BadRequest, oauth.authorizationUrl("c", "r", "", .{}));
+    try std.testing.expectError(error.BadRequest, oauth.authorizationUrl("c", "r", "x", .{ .state = "\xff" }));
+}
+
 fn callOperation(client: *vpndetection.Client, operation: []const u8, args: corpus.OauthArgs) !void {
     var diagnostics: vpndetection.Diagnostics = .{};
     return callOperationWith(client, operation, args, &diagnostics);
@@ -599,13 +693,23 @@ fn callOperationWith(
         (try oauth.exchangeRefreshToken(id, args.refreshToken orelse "", options)).deinit();
     } else if (std.mem.eql(u8, operation, "revoke")) {
         try oauth.revoke(id, args.token orelse "", options);
+    } else if (std.mem.eql(u8, operation, "exchangeAuthorizationCode")) {
+        (try oauth.exchangeAuthorizationCode(
+            id,
+            args.code orelse "",
+            args.codeVerifier orelse "",
+            args.redirectUri orelse "",
+            options,
+        )).deinit();
     } else {
         std.debug.panic("the corpus names an operation this release lacks: {s}", .{operation});
     }
 }
 
 fn endpointOf(operation: []const u8) []const u8 {
-    if (std.mem.eql(u8, operation, "exchangeDeviceCode") or std.mem.eql(u8, operation, "exchangeRefreshToken")) {
+    if (std.mem.eql(u8, operation, "exchangeDeviceCode") or std.mem.eql(u8, operation, "exchangeRefreshToken") or
+        std.mem.eql(u8, operation, "exchangeAuthorizationCode"))
+    {
         return "token";
     }
     return operation;

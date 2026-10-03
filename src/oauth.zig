@@ -1,6 +1,7 @@
-//! Signing a person in on their own machine with the OAuth device flow, so a
-//! program can be handed one of their API keys instead of asking them to paste
-//! it.
+//! Signing a person in with OAuth, so a program can be handed one of their API
+//! keys instead of asking them to paste it: the device flow on their own
+//! machine, or the authorization code flow where an app can take a browser
+//! redirect.
 
 const std = @import("std");
 
@@ -18,6 +19,11 @@ const device_code_grant = "urn:ietf:params:oauth:grant-type:device_code";
 /// RFC 8628's default, for a device authorization whose interval is below 1.
 const default_poll_interval_s = 5;
 const slow_down_step_s = 5;
+/// The only PKCE method the server accepts.
+const pkce_method = "S256";
+/// 32 bytes as unpadded base64url, which a SHA-256 digest also is.
+const pkce_length = 43;
+const Sha256 = std.crypto.hash.sha2.Sha256;
 
 /// Per-call options for an `OauthApi` call.
 pub const OauthOptions = struct {
@@ -45,12 +51,38 @@ pub const DeviceAuthorizationOptions = struct {
     diagnostics: ?*Diagnostics = null,
 };
 
-/// The OAuth authorization server behind the API: the device flow, token
-/// refresh and revocation.
+/// What `authorizationUrl` asks for. A value left null, or empty, is left out of
+/// the URL.
+pub const AuthorizationUrlOptions = struct {
+    /// The scopes to ask for, space-delimited, e.g. `apikeys.use`.
+    scope: ?[]const u8 = null,
+    /// A value of your own that the redirect brings back as it was sent. Check
+    /// it before exchanging the code.
+    state: ?[]const u8 = null,
+    /// The API the tokens are for (RFC 8707).
+    resource: ?[]const u8 = null,
+};
+
+/// One sign-in's PKCE pair, from `createPkce`: `challenge` goes into the
+/// authorization URL, `verifier` only to the exchange. Fixed-size, so there is
+/// nothing to free.
+pub const Pkce = struct {
+    /// 32 random bytes as 43 characters of unpadded base64url.
+    verifier: [pkce_length]u8,
+    /// The verifier's SHA-256, as unpadded base64url.
+    challenge: [pkce_length]u8,
+    /// `S256`, the only method the server accepts.
+    method: []const u8 = pkce_method,
+};
+
+/// The OAuth authorization server behind the API: the device flow, the
+/// authorization code flow with PKCE, token refresh and revocation.
 ///
 /// Every call takes a client ID, which is issued on request from
-/// support@vpndetection.io. None of these requests carries the client's API
-/// key, and none needs one, so a client built without a key works the same.
+/// support@vpndetection.io, or for the authorization code flow is the https URL
+/// of a client metadata document the app serves. None of these requests carries
+/// the client's API key, and none needs one, so a client built without a key
+/// works the same.
 /// Every answer is a `std.json.Parsed` whose arena owns it, so `deinit` is the
 /// whole cleanup.
 ///
@@ -167,6 +199,111 @@ pub const OauthApi = struct {
             .diagnostics = diag,
         });
         self.client.gpa.free(body);
+    }
+
+    /// The URL to open in the person's browser for the authorization code flow,
+    /// owned by the caller: free it with the allocator the client was built
+    /// with. Makes no request. Once they decide, the server redirects to
+    /// `redirect_uri` with a `code` for `exchangeAuthorizationCode` and the
+    /// `state` given here, or with an `error`.
+    ///
+    /// Every value is percent-encoded, leaving only `A-Z a-z 0-9 - . _ ~`
+    /// literal. An empty required value, or one that is not UTF-8, is
+    /// `error.BadRequest`.
+    pub fn authorizationUrl(
+        self: OauthApi,
+        client_id: []const u8,
+        redirect_uri: []const u8,
+        code_challenge: []const u8,
+        options: AuthorizationUrlOptions,
+    ) error{ BadRequest, OutOfMemory }![]u8 {
+        const required = [_]Field{
+            .{ .name = "client_id", .value = client_id },
+            .{ .name = "redirect_uri", .value = redirect_uri },
+            .{ .name = "code_challenge", .value = code_challenge },
+        };
+        var params: [8]Field = undefined;
+        var count: usize = 0;
+        params[count] = .{ .name = "response_type", .value = "code" };
+        count += 1;
+        for (required) |field| {
+            if (field.value.len == 0) return error.BadRequest;
+            params[count] = field;
+            count += 1;
+        }
+        params[count] = .{ .name = "code_challenge_method", .value = pkce_method };
+        count += 1;
+        for ([_]Field{
+            .{ .name = "scope", .value = options.scope orelse "" },
+            .{ .name = "state", .value = options.state orelse "" },
+            .{ .name = "resource", .value = options.resource orelse "" },
+        }) |optional| {
+            if (optional.value.len > 0) {
+                params[count] = optional;
+                count += 1;
+            }
+        }
+        for (params[0..count]) |param| {
+            if (!std.unicode.utf8ValidateSlice(param.value)) return error.BadRequest;
+        }
+
+        const gpa = self.client.gpa;
+        var url: std.ArrayList(u8) = .empty;
+        errdefer url.deinit(gpa);
+        try url.appendSlice(gpa, self.client.transport.base_url);
+        try url.appendSlice(gpa, "/oauth/authorize");
+        for (params[0..count], 0..) |param, i| {
+            try url.append(gpa, if (i == 0) '?' else '&');
+            try url.appendSlice(gpa, param.name);
+            try url.append(gpa, '=');
+            try http.appendEncoded(gpa, &url, param.value);
+        }
+        return url.toOwnedSlice(gpa);
+    }
+
+    /// Exchanges the `code` a sign-in's redirect brought back for tokens, once.
+    /// `code_verifier` is the `Pkce.verifier` whose challenge went into the
+    /// authorization URL, and `redirect_uri` that URL's, exactly.
+    ///
+    /// Never retried: the server spends the code on first read, before it
+    /// checks the verifier, so a retry could only be refused.
+    pub fn exchangeAuthorizationCode(
+        self: OauthApi,
+        client_id: []const u8,
+        code: []const u8,
+        code_verifier: []const u8,
+        redirect_uri: []const u8,
+        options: OauthOptions,
+    ) OauthCallError!Parsed(TokenResponse) {
+        return self.exchange(&.{
+            .{ .name = "grant_type", .value = "authorization_code" },
+            .{ .name = "code", .value = code },
+            .{ .name = "redirect_uri", .value = redirect_uri },
+            .{ .name = "client_id", .value = client_id },
+            .{ .name = "code_verifier", .value = code_verifier },
+        }, options);
+    }
+
+    /// A fresh PKCE pair for one sign-in: 32 bytes from the `Io`'s
+    /// cryptographically secure generator as the verifier, with its challenge.
+    pub fn createPkce(self: OauthApi) Pkce {
+        var bytes: [32]u8 = undefined;
+        self.client.io.random(&bytes);
+        var pkce: Pkce = .{ .verifier = undefined, .challenge = undefined };
+        _ = std.base64.url_safe_no_pad.Encoder.encode(&pkce.verifier, &bytes);
+        pkce.challenge = self.pkceChallenge(&pkce.verifier);
+        return pkce;
+    }
+
+    /// The `S256` challenge for a PKCE verifier: its SHA-256, as unpadded
+    /// base64url.
+    pub fn pkceChallenge(self: OauthApi, verifier: []const u8) [pkce_length]u8 {
+        _ = self;
+        var digest: [Sha256.digest_length]u8 = undefined;
+        Sha256.hash(verifier, &digest, .{});
+        var challenge: [pkce_length]u8 = undefined;
+        _ = std.base64.url_safe_no_pad.Encoder.encode(&challenge, &digest);
+        return challenge;
     }
 
     /// Waits for the person to approve a device sign-in, and returns its tokens.

@@ -67,11 +67,13 @@ pub const Database = @import("database.zig").Database;
 
 pub const DatabaseVersion = @import("database.zig").DatabaseVersion;
 
+pub const AuthorizationUrlOptions = @import("oauth.zig").AuthorizationUrlOptions;
 pub const DeviceAuthorization = @import("oauth.zig").DeviceAuthorization;
 pub const DeviceAuthorizationOptions = @import("oauth.zig").DeviceAuthorizationOptions;
 pub const OauthApi = @import("oauth.zig").OauthApi;
 pub const OauthMetadata = @import("oauth.zig").OauthMetadata;
 pub const OauthOptions = @import("oauth.zig").OauthOptions;
+pub const Pkce = @import("oauth.zig").Pkce;
 pub const TokenResponse = @import("oauth.zig").TokenResponse;
 
 pub const CallError = @import("errors.zig").CallError;

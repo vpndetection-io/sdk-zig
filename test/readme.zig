@@ -93,6 +93,7 @@ fn examples(gpa: std.mem.Allocator) !void {
     defer size.deinit();
 
     try signIn(gpa, &threaded);
+    try signInByCode(gpa, &threaded, "code");
 }
 
 fn signIn(gpa: std.mem.Allocator, threaded: *std.Io.Threaded) !void {
@@ -113,4 +114,17 @@ fn signIn(gpa: std.mem.Allocator, threaded: *std.Io.Threaded) !void {
         error.OauthAccessDenied, error.OauthExpiredToken => {},
         else => return err,
     };
+}
+
+fn signInByCode(gpa: std.mem.Allocator, threaded: *std.Io.Threaded, code: []const u8) !void {
+    var client = try vpndetection.Client.init(gpa, threaded.io(), .{});
+    defer client.deinit();
+    const redirect_uri = "http://127.0.0.1:8765/callback";
+    const pkce = client.oauth().createPkce();
+
+    const url = try client.oauth().authorizationUrl("your-client-id", redirect_uri, &pkce.challenge, .{ .scope = "apikeys.use", .state = "your-state" });
+    defer gpa.free(url);
+    // Open url in the browser. Its redirect to redirect_uri carries code and state.
+    const token = try client.oauth().exchangeAuthorizationCode("your-client-id", code, &pkce.verifier, redirect_uri, .{});
+    defer token.deinit();
 }
