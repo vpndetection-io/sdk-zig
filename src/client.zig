@@ -205,31 +205,100 @@ pub const Client = struct {
         if (bogon.isBogon(carried)) {
             return lookup_mod.bogonLookup(self.gpa, carried);
         }
-        if (self.cache) |*cache| {
-            if (try cache.get(self.io, carried, self.gpa)) |cached| {
-                defer self.gpa.free(cached);
-                return self.parse(cached, diag);
+        const cache = if (self.cache) |*cache| cache else return self.serve(carried, options, timeout, diag, null);
+        // Callers that miss at the same moment share one request: the first
+        // leads it under its own options, the rest wait for its answer or its
+        // failure. One whose leader was canceled asks again.
+        while (true) {
+            switch (try cache.claim(self.io, carried, self.gpa)) {
+                .hit => |cached| {
+                    defer self.gpa.free(cached);
+                    return self.parse(cached, diag);
+                },
+                .lead => |flight| return self.serve(carried, options, timeout, diag, flight),
+                .wait => |flight| switch (try self.waitFor(cache, flight, diag)) {
+                    .served => |body| {
+                        defer self.gpa.free(body);
+                        return self.parse(body, diag);
+                    },
+                    .failed => |failure| {
+                        diag.* = failure.diagnostics;
+                        return failure.err;
+                    },
+                    .abandoned => continue,
+                },
             }
         }
+    }
 
+    /// Asks the API about one address, landing what it gets on the flight it
+    /// leads, if any: an answer is cached, and a failure reaches every waiter.
+    fn serve(
+        self: *Client,
+        carried: []const u8,
+        options: CallOptions,
+        timeout: Io.Duration,
+        diag: *Diagnostics,
+        flight: ?*cache_mod.Cache.Flight,
+    ) CallError!Lookup {
+        var canceled = false;
+        const body = self.fetch(carried, options, timeout, diag, &canceled) catch |err| {
+            if (flight) |led| {
+                self.cache.?.land(self.io, carried, led, if (canceled)
+                    .abandoned
+                else
+                    .{ .failed = .{ .err = err, .diagnostics = diag.* } });
+            }
+            return err;
+        };
+        defer self.gpa.free(body);
+
+        const result = self.parse(body, diag) catch |err| {
+            if (flight) |led| {
+                self.cache.?.land(self.io, carried, led, .{ .failed = .{ .err = err, .diagnostics = diag.* } });
+            }
+            return err;
+        };
+        if (flight) |led| {
+            self.cache.?.land(self.io, carried, led, .{ .served = body });
+        }
+        return result;
+    }
+
+    fn fetch(
+        self: *Client,
+        carried: []const u8,
+        options: CallOptions,
+        timeout: Io.Duration,
+        diag: *Diagnostics,
+        canceled: *bool,
+    ) CallError![]u8 {
         var path: std.ArrayList(u8) = .empty;
         defer path.deinit(self.gpa);
         try path.append(self.gpa, '/');
         try http.appendEncoded(self.gpa, &path, carried);
 
-        const body = try http.send(&self.transport, self.gpa, self.io, .{
+        return http.send(&self.transport, self.gpa, self.io, .{
             .path = path.items,
             .retries = options.retries orelse self.retries,
             .timeout = timeout,
             .diagnostics = diag,
+            .canceled = canceled,
         });
-        defer self.gpa.free(body);
+    }
 
-        const result = try self.parse(body, diag);
-        if (self.cache) |*cache| {
-            cache.put(self.io, carried, body);
-        }
-        return result;
+    /// Waits for another caller's request. A waiter canceled meanwhile returns
+    /// at once, as a canceled request does, and leaves the request to its
+    /// leader.
+    fn waitFor(self: *Client, cache: *cache_mod.Cache, flight: *cache_mod.Cache.Flight, diag: *Diagnostics) CallError!cache_mod.Cache.Landing {
+        return cache.wait(self.io, flight, self.gpa) catch |err| switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            error.Canceled => {
+                self.io.recancel();
+                diag.setMessage("the lookup was canceled");
+                return error.Network;
+            },
+        };
     }
 
     /// Classifies the address this client is calling from. The caller owns the
@@ -374,6 +443,23 @@ pub const Client = struct {
         // answer is filled in here and never sent.
         var pending: std.ArrayList(usize) = .empty;
         defer pending.deinit(self.gpa);
+        // With a cache, every address is boarded before a chunk is built, so a
+        // lookup arriving meanwhile waits for this batch rather than asking
+        // again. `led[i]` is the flight entry i leads until its chunk lands it;
+        // an address someone else is already asking about waits for them.
+        var led: std.ArrayList(?*Flight) = .empty;
+        defer led.deinit(self.gpa);
+        var waits: std.ArrayList(Wait) = .empty;
+        defer waits.deinit(self.gpa);
+        // Whatever ends the batch early, no one is left waiting on it.
+        errdefer if (self.cache) |*cache| {
+            for (led.items, 0..) |maybe, index| if (maybe) |flight| {
+                cache.land(self.io, carried.items[index], flight, .abandoned);
+            };
+            for (waits.items) |wait| if (wait.flight) |flight| {
+                cache.leave(self.io, flight);
+            };
+        };
         for (ips) |ip| {
             if (batch.entries.contains(ip)) {
                 continue;
@@ -384,6 +470,7 @@ pub const Client = struct {
                 try batch.entries.put(self.gpa, key, .{ .failed = .{ .err = error.Network } });
             }
             const index = batch.entries.count() - 1;
+            try led.append(self.gpa, null);
             var buffer: [bogon.max_unmapped_len]u8 = undefined;
             const text = bogon.unmapped(key, &buffer);
             const address = if (text.ptr == key.ptr) key else blk: {
@@ -407,34 +494,59 @@ pub const Client = struct {
                 batch.entries.values()[index] = .{ .ok = try lookup_mod.bogonLookup(self.gpa, address) };
                 continue;
             }
+            try pending.ensureUnusedCapacity(self.gpa, 1);
             if (self.cache) |*cache| {
-                if (try cache.get(self.io, address, self.gpa)) |cached| {
-                    defer self.gpa.free(cached);
-                    var diag: Diagnostics = .{};
-                    batch.entries.values()[index] = if (self.parse(cached, &diag)) |answer|
-                        .{ .ok = answer }
-                    else |err|
-                        .{ .failed = .{ .err = err, .diagnostics = diag } };
-                    continue;
+                try waits.ensureUnusedCapacity(self.gpa, 1);
+                switch (try cache.claim(self.io, address, self.gpa)) {
+                    .hit => |cached| {
+                        defer self.gpa.free(cached);
+                        var diag: Diagnostics = .{};
+                        batch.entries.values()[index] = if (self.parse(cached, &diag)) |answer|
+                            .{ .ok = answer }
+                        else |err|
+                            .{ .failed = .{ .err = err, .diagnostics = diag } };
+                        continue;
+                    },
+                    .wait => |flight| {
+                        waits.appendAssumeCapacity(.{ .index = index, .flight = flight });
+                        continue;
+                    },
+                    .lead => |flight| led.items[index] = flight,
                 }
             }
-            try pending.append(self.gpa, index);
+            pending.appendAssumeCapacity(index);
         }
-        if (pending.items.len == 0) {
-            try self.answerFollowers(batch.entries.values(), followers.items);
-            return batch;
+        if (pending.items.len > 0) {
+            try self.sendChunks(&batch, carried.items, led.items, pending.items, options);
         }
+        for (waits.items) |*wait| {
+            const flight = wait.flight.?;
+            wait.flight = null;
+            batch.entries.values()[wait.index] = try self.answerWait(flight, carried.items[wait.index], options);
+        }
+        try self.answerFollowers(batch.entries.values(), followers.items);
+        return batch;
+    }
 
+    fn sendChunks(
+        self: *Client,
+        batch: *Batch,
+        keys: []const []const u8,
+        flights: []?*Flight,
+        pending: []const usize,
+        options: BatchOptions,
+    ) Allocator.Error!void {
         var work: Work = .{
             .client = self,
-            .keys = carried.items,
+            .keys = keys,
             .entries = batch.entries.values(),
-            .pending = pending.items,
+            .flights = flights,
+            .pending = pending,
             .next_chunk = .init(0),
             .retries = options.retries,
             .timeout = options.timeout,
         };
-        const chunk_count = (pending.items.len + batch_max - 1) / batch_max;
+        const chunk_count = (pending.len + batch_max - 1) / batch_max;
         const limit = options.concurrency orelse self.concurrency;
         const workers = @min(limit, chunk_count);
         const helpers = try self.gpa.alloc(Io.Future(void), workers - 1);
@@ -451,8 +563,45 @@ pub const Client = struct {
         for (helpers[0..spawned]) |*helper| {
             _ = helper.await(self.io);
         }
-        try self.answerFollowers(batch.entries.values(), followers.items);
-        return batch;
+    }
+
+    /// The entry for an address another caller was already asking about: its
+    /// answer, or its failure. One whose leader was canceled is asked again.
+    fn answerWait(self: *Client, flight: *Flight, address: []const u8, options: BatchOptions) Allocator.Error!Batch.Entry {
+        var diag: Diagnostics = .{};
+        const landing = self.waitFor(&self.cache.?, flight, &diag) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => return .{ .failed = .{ .err = err, .diagnostics = diag } },
+        };
+        switch (landing) {
+            .served => |body| {
+                defer self.gpa.free(body);
+                const answer = self.parse(body, &diag) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return .{ .failed = .{ .err = err, .diagnostics = diag } },
+                };
+                return .{ .ok = answer };
+            },
+            .failed => |failure| return .{ .failed = .{ .err = failure.err, .diagnostics = failure.diagnostics } },
+            .abandoned => {
+                const answer = self.lookupWith(address, .{
+                    .retries = options.retries,
+                    .timeout = options.timeout,
+                    .diagnostics = &diag,
+                }) catch |err| switch (err) {
+                    error.OutOfMemory => return error.OutOfMemory,
+                    else => return .{ .failed = .{ .err = err, .diagnostics = diag } },
+                };
+                return .{ .ok = answer };
+            },
+        }
+    }
+
+    /// Ends the flight an entry leads, if it leads one.
+    fn landEntry(self: *Client, work: *Work, index: usize, outcome: cache_mod.Cache.Outcome) void {
+        const flight = work.flights[index] orelse return;
+        work.flights[index] = null;
+        self.cache.?.land(self.io, work.keys[index], flight, outcome);
     }
 
     /// Gives each address asked under a second spelling of a carried address
@@ -486,6 +635,7 @@ pub const Client = struct {
         self.postChunk(work, indexes, &diag) catch |err| {
             for (indexes) |index| {
                 work.entries[index] = .{ .failed = .{ .err = err, .diagnostics = diag } };
+                self.landEntry(work, index, .{ .failed = .{ .err = err, .diagnostics = diag } });
             }
         };
     }
@@ -520,7 +670,7 @@ pub const Client = struct {
         const results = member(parsed.value, "results");
         const failures = member(parsed.value, "errors");
         for (indexes) |index| {
-            work.entries[index] = try self.entryFor(work.keys[index], results, failures);
+            work.entries[index] = try self.entryFor(work, index, results, failures);
         }
     }
 
@@ -529,10 +679,12 @@ pub const Client = struct {
     /// what a single lookup would have.
     fn entryFor(
         self: *Client,
-        ip: []const u8,
+        work: *Work,
+        index: usize,
         results: ?std.json.ObjectMap,
         failures: ?std.json.ObjectMap,
     ) Allocator.Error!Batch.Entry {
+        const ip = work.keys[index];
         if (results) |served| {
             if (served.get(ip)) |value| {
                 const encoded = try std.json.Stringify.valueAlloc(self.gpa, value, .{});
@@ -540,17 +692,20 @@ pub const Client = struct {
                 var diag: Diagnostics = .{};
                 const answer = self.parse(encoded, &diag) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
-                    else => return .{ .failed = .{ .err = err, .diagnostics = diag } },
+                    else => {
+                        self.landEntry(work, index, .{ .failed = .{ .err = err, .diagnostics = diag } });
+                        return .{ .failed = .{ .err = err, .diagnostics = diag } };
+                    },
                 };
-                if (self.cache) |*cache| {
-                    cache.put(self.io, ip, encoded);
-                }
+                self.landEntry(work, index, .{ .served = encoded });
                 return .{ .ok = answer };
             }
         }
         if (failures) |failed| {
             if (failed.get(ip)) |value| {
-                return .{ .failed = entryFailure(value) };
+                const failure = entryFailure(value);
+                self.landEntry(work, index, .{ .failed = .{ .err = failure.err, .diagnostics = failure.diagnostics } });
+                return .{ .failed = failure };
             }
         }
         var failure: Batch.Failure = .{ .err = error.ServerError };
@@ -558,6 +713,7 @@ pub const Client = struct {
         var text: [Diagnostics.max_message_len]u8 = undefined;
         const message = std.fmt.bufPrint(&text, "the batch answer did not include {s}", .{ip}) catch &text;
         failure.diagnostics.setMessage(message);
+        self.landEntry(work, index, .{ .failed = .{ .err = failure.err, .diagnostics = failure.diagnostics } });
         return .{ .failed = failure };
     }
 
@@ -641,11 +797,22 @@ const Follower = struct {
     leader: usize,
 };
 
+const Flight = cache_mod.Cache.Flight;
+
+/// An address a batch waits for someone else's request about. The flight is
+/// let go of once waited for.
+const Wait = struct {
+    index: usize,
+    flight: ?*Flight,
+};
+
 const Work = struct {
     client: *Client,
     /// What each entry is sent as: the address it carries.
     keys: []const []const u8,
     entries: []Batch.Entry,
+    /// The flight each entry leads, until its chunk lands it.
+    flights: []?*Flight,
     /// The indexes of the entries still to be answered, chunked by position.
     pending: []const usize,
     next_chunk: std.atomic.Value(usize),

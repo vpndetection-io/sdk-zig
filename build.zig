@@ -22,6 +22,7 @@ pub fn build(b: *std.Build) void {
     const suites = [_][]const u8{
         "test/conformance.zig",
         "test/client.zig",
+        "test/sharing.zig",
         "test/oauth.zig",
         "test/timeout.zig",
         "test/readme.zig",

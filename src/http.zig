@@ -34,6 +34,10 @@ pub const Request = struct {
     /// the answer. A retry starts a fresh one.
     timeout: Io.Duration,
     diagnostics: *Diagnostics,
+    /// Set when the call ends because its task was canceled, for a caller that
+    /// must tell that from a failure: the request it leads for others is then
+    /// abandoned rather than failed.
+    canceled: ?*bool = null,
 };
 
 /// Retries a transient failure, waiting whatever the server asked for over the
@@ -54,12 +58,31 @@ pub fn send(transport: *Transport, gpa: Allocator, io: Io, request: Request) Cal
         if (bounded(io, request.timeout, diag, attempt, .{ transport, gpa, request })) |body| {
             return body;
         } else |err| {
-            if (remaining == 0 or !errors.isRetryable(err) or !backOff(io, diag, &delay)) {
+            if (remaining == 0 or !errors.isRetryable(err)) {
+                if (request.canceled) |canceled| {
+                    canceled.* = wasCanceled(io);
+                }
+                return err;
+            }
+            if (!backOff(io, diag, &delay)) {
+                if (request.canceled) |canceled| {
+                    canceled.* = true;
+                }
                 return err;
             }
             remaining -= 1;
         }
     }
+}
+
+/// Whether the task has a cancelation outstanding, which `bounded` re-arms when
+/// it cancels an attempt. It stays armed for the caller's next cancelation point.
+fn wasCanceled(io: Io) bool {
+    io.checkCancel() catch {
+        io.recancel();
+        return true;
+    };
+    return false;
 }
 
 /// Refuses a timeout `validTimeout` rejects. `send` and `sendOauth` run it on
