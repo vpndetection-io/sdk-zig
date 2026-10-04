@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.5.1 - 2026-10-04
+
+### Fixes
+
+- Re-pin the spec to 2026.10.03: metadata needs no license ([`f8524e2`](https://github.com/vpndetection-io/sdk-zig/commit/f8524e20ef9e3103731a84b4c4772c232b24086a))
+
 ## 4.5.0 - 2026-10-03
 
 ### Features
