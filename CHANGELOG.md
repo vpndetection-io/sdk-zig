@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.5.2 - 2026-10-10
+
+### Fixes
+
+- Re-pin the spec to 2026.10.09: rotating a key needs apikeys.reveal ([`9aa7c28`](https://github.com/vpndetection-io/sdk-zig/commit/9aa7c2836a97e112d20efe266468c0cdc356f7ef))
+
 ## 4.5.1 - 2026-10-04
 
 ### Fixes
