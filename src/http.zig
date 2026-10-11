@@ -276,7 +276,7 @@ pub const Transport = struct {
         var request = try self.open(url, diag);
         defer request.deinit();
         var response = request.receiveHead(&.{}) catch |err| return fail(diag, err);
-        return readJson(&response, gpa, diag);
+        return readJson(&response, gpa, self.http.io, diag);
     }
 
     /// The body of a 2xx JSON response to a POST carrying `body`, owned by
@@ -298,7 +298,7 @@ pub const Transport = struct {
         defer request.deinit();
         request.sendBodyComplete(payload) catch |err| return fail(diag, err);
         var response = request.receiveHead(&.{}) catch |err| return fail(diag, err);
-        return readJson(&response, gpa, diag);
+        return readJson(&response, gpa, self.http.io, diag);
     }
 
     /// The body of a 2xx answer to an OAuth request, owned by `gpa`.
@@ -339,7 +339,7 @@ pub const Transport = struct {
 
         const status = @intFromEnum(response.head.status);
         diag.status = status;
-        const retry_after = readRetryAfter(response.head);
+        const retry_after = readRetryAfter(response.head, self.http.io);
         diag.retry_after_s = retry_after.seconds;
         const body = try readBody(&response, gpa, diag);
         if (status >= 200 and status < 300) {
@@ -361,10 +361,10 @@ pub const Transport = struct {
     }
 
     /// A 2xx body, or the failure a non-2xx describes.
-    fn readJson(response: *std.http.Client.Response, gpa: Allocator, diag: *Diagnostics) CallError![]u8 {
+    fn readJson(response: *std.http.Client.Response, gpa: Allocator, io: Io, diag: *Diagnostics) CallError![]u8 {
         const status = @intFromEnum(response.head.status);
         diag.status = status;
-        const retry_after = readRetryAfter(response.head);
+        const retry_after = readRetryAfter(response.head, io);
         diag.retry_after_s = retry_after.seconds;
 
         const body = try readBody(response, gpa, diag);
@@ -402,7 +402,7 @@ pub const Transport = struct {
 
         const status = @intFromEnum(response.head.status);
         diag.status = status;
-        const retry_after = readRetryAfter(response.head);
+        const retry_after = readRetryAfter(response.head, self.http.io);
         diag.retry_after_s = retry_after.seconds;
 
         if (status >= 300 and status < 400) {
@@ -555,7 +555,7 @@ pub const Transfer = struct {
         self.response = self.request.receiveHead(&.{}) catch |err| return Transport.fail(diag, err);
         const status = @intFromEnum(self.response.head.status);
         diag.status = status;
-        const retry_after = readRetryAfter(self.response.head);
+        const retry_after = readRetryAfter(self.response.head, transport.http.io);
         diag.retry_after_s = retry_after.seconds;
         if (status < 200 or status >= 300) {
             const body = try readBody(&self.response, gpa, diag);
@@ -641,20 +641,160 @@ fn readBody(
 /// throttle rather than a spent allowance, so the two are read separately: a
 /// value that will not parse still counts as the server asking us to wait, and
 /// the retry then falls back to the client's own backoff.
-fn readRetryAfter(head: std.http.Client.Response.Head) struct { present: bool, seconds: ?u64 } {
+fn readRetryAfter(head: std.http.Client.Response.Head, io: Io) struct { present: bool, seconds: ?u64 } {
     var it = head.iterateHeaders();
     while (it.next()) |header| {
         if (!std.ascii.eqlIgnoreCase(header.name, "retry-after")) {
             continue;
         }
         const value = std.mem.trim(u8, header.value, " \t");
-        // No wider than the i64 `Io.Duration.fromSeconds` takes: a longer wait
-        // is read like one that will not parse, rather than panicking in
-        // `backOff`.
-        const seconds: ?u64 = std.fmt.parseInt(u63, value, 10) catch null;
-        return .{ .present = true, .seconds = seconds };
+        return .{ .present = true, .seconds = retryAfterSeconds(value, Io.Clock.real.now(io).toSeconds()) };
     }
     return .{ .present = false, .seconds = null };
+}
+
+/// The wait a `Retry-After` value asks for at `now_s`, seconds since the epoch:
+/// a count of seconds written as digits and nothing else, or how far away an
+/// HTTP date is, nothing for one already past. Null for anything else. A sign,
+/// a fraction, a digit separator or an exponent is not a count, though
+/// `std.fmt.parseInt` would take a sign or an underscore and hold the call that
+/// long. A count too long for the i64 `Io.Duration.fromSeconds` takes is null
+/// too, rather than a panic in `backOff`.
+pub fn retryAfterSeconds(value: []const u8, now_s: i64) ?u64 {
+    if (value.len > 0 and allDigits(value)) {
+        return std.fmt.parseInt(u63, value, 10) catch null;
+    }
+    const at = httpDate(value, now_s) orelse return null;
+    return @intCast(@max(0, at - now_s));
+}
+
+const short_days = [_][]const u8{ "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" };
+const long_days = [_][]const u8{ "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday" };
+const months = [_][]const u8{ "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" };
+
+/// An HTTP date in one of RFC 9110's three forms, which are always GMT, as
+/// seconds since the epoch: `Sun, 06 Nov 1994 08:49:37 GMT`,
+/// `Sunday, 06-Nov-94 08:49:37 GMT` and `Sun Nov  6 08:49:37 1994`. Null for
+/// any other form, any other zone, and a day or a time that does not exist.
+/// `now_s` places the second form's two-digit year.
+pub fn httpDate(value: []const u8, now_s: i64) ?i64 {
+    // IMF-fixdate.
+    if (value.len == 29 and std.mem.eql(u8, value[3..5], ", ") and value[7] == ' ' and
+        value[11] == ' ' and value[16] == ' ' and std.mem.eql(u8, value[25..], " GMT"))
+    {
+        if (!oneOf(value[0..3], &short_days)) {
+            return null;
+        }
+        return epochSeconds(number(value[12..16]), month(value[8..11]), number(value[5..7]), value[17..25]);
+    }
+    // asctime, whose day of the month is padded with a space.
+    if (value.len == 24 and value[3] == ' ' and value[7] == ' ' and value[10] == ' ' and value[19] == ' ') {
+        if (!oneOf(value[0..3], &short_days)) {
+            return null;
+        }
+        const day: ?i64 = if (value[8] == ' ') number(value[9..10]) else number(value[8..10]);
+        return epochSeconds(number(value[20..24]), month(value[4..7]), day, value[11..19]);
+    }
+    // RFC 850, whose year has two digits.
+    const comma = std.mem.indexOf(u8, value, ", ") orelse return null;
+    const rest = value[comma + 2 ..];
+    if (!oneOf(value[0..comma], &long_days) or rest.len != 22 or rest[2] != '-' or rest[6] != '-' or
+        rest[9] != ' ' or !std.mem.eql(u8, rest[18..], " GMT"))
+    {
+        return null;
+    }
+    const year = number(rest[7..9]) orelse return null;
+    return epochSeconds(century(year, now_s), month(rest[3..6]), number(rest[0..2]), rest[10..18]);
+}
+
+/// RFC 9110 has a two-digit year that would be more than 50 years ahead read
+/// as the most recent past year with those digits.
+fn century(two_digits: i64, now_s: i64) i64 {
+    const this_year = civilYear(@divFloor(now_s, std.time.s_per_day));
+    const year = this_year - @mod(this_year, 100) + two_digits;
+    return if (year > this_year + 50) year - 100 else year;
+}
+
+fn epochSeconds(year: ?i64, month_number: ?i64, day: ?i64, time: []const u8) ?i64 {
+    const y = year orelse return null;
+    const m = month_number orelse return null;
+    const d = day orelse return null;
+    if (time.len != 8 or time[2] != ':' or time[5] != ':') {
+        return null;
+    }
+    const hour = number(time[0..2]) orelse return null;
+    const minute = number(time[3..5]) orelse return null;
+    // 60 is the leap second RFC 9110 allows.
+    const second = number(time[6..8]) orelse return null;
+    if (d < 1 or d > daysIn(y, m) or hour > 23 or minute > 59 or second > 60) {
+        return null;
+    }
+    return daysFromCivil(y, m, d) * std.time.s_per_day + hour * 3600 + minute * 60 + second;
+}
+
+fn daysIn(year: i64, month_number: i64) i64 {
+    return switch (month_number) {
+        2 => if (@mod(year, 4) == 0 and (@mod(year, 100) != 0 or @mod(year, 400) == 0)) 29 else 28,
+        4, 6, 9, 11 => 30,
+        else => 31,
+    };
+}
+
+/// Days since 1970-01-01 in the proleptic Gregorian calendar.
+fn daysFromCivil(year: i64, month_number: i64, day: i64) i64 {
+    const y = if (month_number <= 2) year - 1 else year;
+    const era = @divFloor(y, 400);
+    const year_of_era = y - era * 400;
+    const day_of_year = @divFloor(153 * @mod(month_number + 9, 12) + 2, 5) + day - 1;
+    const day_of_era = year_of_era * 365 + @divFloor(year_of_era, 4) - @divFloor(year_of_era, 100) + day_of_year;
+    return era * 146097 + day_of_era - 719468;
+}
+
+/// The year holding `days` since 1970-01-01.
+fn civilYear(days: i64) i64 {
+    const z = days + 719468;
+    const era = @divFloor(z, 146097);
+    const day_of_era = z - era * 146097;
+    const year_of_era = @divFloor(day_of_era - @divFloor(day_of_era, 1460) + @divFloor(day_of_era, 36524) -
+        @divFloor(day_of_era, 146096), 365);
+    const day_of_year = day_of_era - (365 * year_of_era + @divFloor(year_of_era, 4) - @divFloor(year_of_era, 100));
+    const shifted_month = @divFloor(5 * day_of_year + 2, 153);
+    return year_of_era + era * 400 + @as(i64, if (shifted_month >= 10) 1 else 0);
+}
+
+fn month(name: []const u8) ?i64 {
+    for (months, 1..) |candidate, n| {
+        if (std.mem.eql(u8, name, candidate)) {
+            return @as(i64, @intCast(n));
+        }
+    }
+    return null;
+}
+
+fn oneOf(name: []const u8, names: []const []const u8) bool {
+    for (names) |candidate| {
+        if (std.mem.eql(u8, name, candidate)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// Digits alone as a number, never a sign or a separator.
+fn number(text: []const u8) ?i64 {
+    if (text.len == 0 or !allDigits(text)) {
+        return null;
+    }
+    return std.fmt.parseInt(i64, text, 10) catch null;
+}
+
+fn allDigits(text: []const u8) bool {
+    for (text) |c| {
+        if (!std.ascii.isDigit(c)) {
+            return false;
+        }
+    }
+    return true;
 }
 
 /// Percent-encodes everything outside the unreserved set. An IPv6 literal
@@ -675,4 +815,70 @@ test "an address is percent encoded into the path" {
     defer out.deinit(gpa);
     try appendEncoded(gpa, &out, "2606:4700:4700::1111");
     try std.testing.expectEqualStrings("2606%3A4700%3A4700%3A%3A1111", out.items);
+}
+
+test "a Retry-After count is digits and nothing else" {
+    const now: i64 = 1_760_000_000;
+    try std.testing.expectEqual(@as(?u64, 0), retryAfterSeconds("0", now));
+    try std.testing.expectEqual(@as(?u64, 120), retryAfterSeconds("120", now));
+    try std.testing.expectEqual(@as(?u64, 7), retryAfterSeconds("007", now));
+    try std.testing.expectEqual(@as(?u64, std.math.maxInt(u63)), retryAfterSeconds("9223372036854775807", now));
+    for ([_][]const u8{ "", "+1", "-1", "1_0", "1.5", "1e3", "0x10", " 1", "1 ", "soon", "9223372036854775808" }) |value| {
+        std.testing.expectEqual(@as(?u64, null), retryAfterSeconds(value, now)) catch |err| {
+            std.debug.print("Retry-After \"{s}\" was read as a count\n", .{value});
+            return err;
+        };
+    }
+}
+
+test "an HTTP date is read in RFC 9110's three forms, as GMT" {
+    // 1994-11-06T08:49:37Z, the example all three forms spell.
+    const at: i64 = 784111777;
+    try std.testing.expectEqual(@as(?i64, at), httpDate("Sun, 06 Nov 1994 08:49:37 GMT", 0));
+    try std.testing.expectEqual(@as(?i64, at), httpDate("Sunday, 06-Nov-94 08:49:37 GMT", at));
+    try std.testing.expectEqual(@as(?i64, at), httpDate("Sun Nov  6 08:49:37 1994", 0));
+    try std.testing.expectEqual(@as(?i64, 951782400), httpDate("Tue, 29 Feb 2000 00:00:00 GMT", 0));
+    try std.testing.expectEqual(@as(?i64, 0), httpDate("Thu, 01 Jan 1970 00:00:00 GMT", 0));
+    // RFC 850's year is read as the nearest past one within 50 years ahead.
+    const in_2026: i64 = 1_760_000_000;
+    try std.testing.expectEqual(@as(?i64, 4_102_444_800), httpDate("Friday, 01-Jan-00 00:00:00 GMT", 4_102_444_800));
+    try std.testing.expectEqual(httpDate("Sat, 01 Jan 2050 00:00:00 GMT", 0), httpDate("Saturday, 01-Jan-50 00:00:00 GMT", in_2026));
+    try std.testing.expectEqual(httpDate("Mon, 01 Jan 1977 00:00:00 GMT", 0), httpDate("Monday, 01-Jan-77 00:00:00 GMT", in_2026));
+
+    const refused = [_][]const u8{
+        "Sun, 06 Nov 1994 08:49:37 UTC",
+        "Sun, 06 Nov 1994 08:49:37 +0000",
+        "Sun, 06 Nov 1994 08:49:37 EST",
+        "Sun, 31 Nov 1994 08:49:37 GMT",
+        "Sun, 29 Feb 2100 08:49:37 GMT",
+        "Sun, 06 Nov 1994 24:00:00 GMT",
+        "Sun, 06 Nov 1994 08:60:00 GMT",
+        "Sun, 06 Nov 1994 08:49:61 GMT",
+        "Sun, 00 Nov 1994 08:49:37 GMT",
+        "Xyz, 06 Nov 1994 08:49:37 GMT",
+        "Sun, 06 Nob 1994 08:49:37 GMT",
+        "Sun, +6 Nov 1994 08:49:37 GMT",
+        "Sun, 06 Nov 1994 8:49:37 GMT",
+        "Sun, 6 Nov 1994 08:49:37 GMT",
+        "Sunday, 06-Nov-94 08:49:37 UTC",
+        "Sun, 06-Nov-94 08:49:37 GMT",
+        "Sun Nov 31 08:49:37 1994",
+        "Sun Nov  6 08:49:37 1994 GMT",
+        "1994-11-06T08:49:37Z",
+        "tomorrow",
+        "",
+    };
+    for (refused) |value| {
+        std.testing.expectEqual(@as(?i64, null), httpDate(value, 0)) catch |err| {
+            std.debug.print("\"{s}\" was read as a date\n", .{value});
+            return err;
+        };
+    }
+}
+
+test "a Retry-After date asks for the wait until it, and nothing once it is past" {
+    const at: i64 = 784111777;
+    try std.testing.expectEqual(@as(?u64, 3), retryAfterSeconds("Sun, 06 Nov 1994 08:49:37 GMT", at - 3));
+    try std.testing.expectEqual(@as(?u64, 0), retryAfterSeconds("Sun, 06 Nov 1994 08:49:37 GMT", at + 60));
+    try std.testing.expectEqual(@as(?u64, null), retryAfterSeconds("Sun, 31 Nov 1994 08:49:37 GMT", at));
 }
