@@ -289,34 +289,13 @@ pub const DatabaseApi = struct {
         options: client_mod.CallOptions,
     ) CallError!Parsed(T) {
         var scratch: Diagnostics = .{};
-        const diag = options.diagnostics orelse &scratch;
-        const gpa = self.client.gpa;
-
-        const body = try http.send(&self.client.transport, gpa, self.client.io, .{
+        return http.getParsed(T, &self.client.transport, self.client.gpa, self.client.io, .{
             .path = path,
             .query = query,
             .retries = options.retries orelse self.client.retries,
             .timeout = options.timeout orelse self.client.timeout,
-            .diagnostics = diag,
+            .diagnostics = options.diagnostics orelse &scratch,
         });
-        defer gpa.free(body);
-
-        const parsed = try gpa.create(std.heap.ArenaAllocator);
-        errdefer gpa.destroy(parsed);
-        parsed.* = .init(gpa);
-        errdefer parsed.deinit();
-
-        const arena = parsed.allocator();
-        // Parsed from a copy the arena owns, so every string in the answer
-        // outlives the body this call frees.
-        const owned = try arena.dupe(u8, body);
-        const value = std.json.parseFromSliceLeaky(T, arena, owned, .{
-            .ignore_unknown_fields = true,
-        }) catch {
-            diag.setMessage("the answer did not match the documented shape");
-            return error.ServerError;
-        };
-        return .{ .arena = parsed, .value = value };
     }
 };
 

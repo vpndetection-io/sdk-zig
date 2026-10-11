@@ -250,6 +250,147 @@ test "the API key reaches the wire as a bearer token" {
     try std.testing.expect(std.mem.startsWith(u8, harness.stub.lastUserAgent(), "vpndetection-zig/"));
 }
 
+// A key of blanks alone is no key, and the blanks around one, a file's newline
+// among them, are no part of it: through 4.5.2 a blank went out as `Bearer `
+// and the blank, which reads as a wrong key rather than none.
+test "a blank key is no key, and the blanks around a key are dropped" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.routeLookup("1.1.1.1");
+
+    for ([_]?[]const u8{ null, "", "   ", "\t", " \r\n " }) |api_key| {
+        var client = try harness.client(.{ .api_key = api_key, .cache = null });
+        defer client.deinit();
+        (try client.lookup("1.1.1.1")).deinit();
+    }
+    for (harness.stub.seen()) |call| {
+        try std.testing.expectEqualStrings("", call.authorization);
+    }
+    try std.testing.expectEqual(5, harness.stub.callCount());
+
+    var client = try harness.client(.{ .api_key = " sk-test-1234\r\n", .cache = null });
+    defer client.deinit();
+    (try client.lookup("1.1.1.1")).deinit();
+    try std.testing.expectEqualStrings("Bearer sk-test-1234", harness.stub.seen()[5].authorization);
+}
+
+// `std.http.Client` writes a header value out as given: through 4.5.2 a CR LF
+// inside the key put a second header on the wire, and any other control
+// character went out whole.
+test "a key holding a control character is refused before anything is sent" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.routeLookup("1.1.1.1");
+    try harness.stub.route("/myip", .ok("{\"ip\":\"45.83.91.1\",\"is_vpn\":true}"));
+    try harness.stub.route("/api/v1/database/list", .ok("{\"databases\":[]}"));
+
+    for ([_][]const u8{ "sk-test\r\nX-Injected: 1", "sk\x01test", "sk-test\x7f", "sk\ttest" }) |api_key| {
+        var client = try harness.client(.{ .api_key = api_key, .retries = 2 });
+        defer client.deinit();
+        var diagnostics: vpndetection.Diagnostics = .{};
+        try std.testing.expectError(error.BadRequest, client.lookupWith("1.1.1.1", .{ .diagnostics = &diagnostics }));
+        try std.testing.expectEqualStrings("the API key holds a control character", diagnostics.message());
+        try std.testing.expectError(error.BadRequest, client.myIp());
+        try std.testing.expectError(error.BadRequest, client.myEntitlement());
+        try std.testing.expectError(error.BadRequest, client.database().list(.{}));
+        try std.testing.expectError(error.BadRequest, client.database().downloadUrl("vpn_ip_v1", .mmdb, .{}));
+        var batch = try client.lookupBatch(&.{"1.1.1.1"}, .{});
+        defer batch.deinit();
+        switch (batch.get("1.1.1.1").?) {
+            .ok => return error.TestUnexpectedResult,
+            .failed => |failure| try std.testing.expectEqual(error.BadRequest, failure.err),
+        }
+    }
+    try std.testing.expectEqual(0, harness.stub.callCount());
+}
+
+// A proxy's page or a cut-off body is the server's fault like any 5xx. Through
+// 4.5.2 every call read its answer after the retries were spent, so each of
+// these failed after exactly one request, a batch's `[]` and `{}` as an
+// unretried error for every address in the chunk.
+test "a 2xx no call can read is retried, carrying its status" {
+    const gpa = std.testing.allocator;
+    const bodies = [_][]const u8{ "<html>Bad gateway</html>", "{\"ip\":\"1.1.1.1\",\"is_v", "", "null", "[]", "{}" };
+    const paths = [_][]const u8{
+        "/1.1.1.1",              "/myip",                     "/api/v1/entitlement",       "/batch",
+        "/api/v1/database/list", "/api/v1/database/metadata", "/api/v1/database/checksum", "/api/v1/database/downloads",
+    };
+    for (bodies) |body| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        for (paths) |path| {
+            try harness.stub.route(path, .{ .body = body, .verbatim = true });
+        }
+        var client = try harness.client(.{ .retries = 1 });
+        defer client.deinit();
+        var statuses: [paths.len]?u16 = undefined;
+        var failed: [paths.len]?anyerror = .{null} ** paths.len;
+        var diagnostics: [paths.len]vpndetection.Diagnostics = .{vpndetection.Diagnostics{}} ** paths.len;
+
+        if (client.lookupWith("1.1.1.1", .{ .diagnostics = &diagnostics[0] })) |answer| answer.deinit() else |err| failed[0] = err;
+        if (client.myIpWith(.{ .diagnostics = &diagnostics[1] })) |answer| answer.deinit() else |err| failed[1] = err;
+        if (client.myEntitlementWith(.{ .diagnostics = &diagnostics[2] })) |answer| answer.deinit() else |err| failed[2] = err;
+        {
+            var batch = try client.lookupBatch(&.{"1.1.1.1"}, .{});
+            defer batch.deinit();
+            switch (batch.get("1.1.1.1").?) {
+                .ok => {},
+                .failed => |failure| {
+                    failed[3] = failure.err;
+                    diagnostics[3] = failure.diagnostics;
+                },
+            }
+        }
+        const database = client.database();
+        if (database.list(.{ .diagnostics = &diagnostics[4] })) |answer| answer.deinit() else |err| failed[4] = err;
+        if (database.metadata("vpn_ip", .{ .diagnostics = &diagnostics[5] })) |answer| answer.deinit() else |err| failed[5] = err;
+        if (database.checksums("vpn_ip_v1", .mmdb, .{ .diagnostics = &diagnostics[6] })) |answer| answer.deinit() else |err| failed[6] = err;
+        if (database.downloads(null, .{ .diagnostics = &diagnostics[7] })) |answer| answer.deinit() else |err| failed[7] = err;
+
+        for (paths, 0..) |path, i| {
+            statuses[i] = diagnostics[i].status;
+            var sent: usize = 0;
+            for (harness.stub.seen()) |call| {
+                if (std.mem.eql(u8, call.path, path)) sent += 1;
+            }
+            std.testing.expectEqual(@as(?anyerror, error.ServerError), failed[i]) catch |err| {
+                std.debug.print("{s} answering \"{s}\"\n", .{ path, body });
+                return err;
+            };
+            try std.testing.expectEqual(2, sent);
+            try std.testing.expectEqual(@as(?u16, 200), statuses[i]);
+        }
+    }
+}
+
+// The php and ruby rule: a chunk is retried whole only when it cannot be read
+// as a whole. One entry that is not a lookup is that address's error alone.
+test "a batch entry no call can read fails that address alone, once" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/batch", .{
+        .body = "{\"results\":{\"8.8.8.8\":\"not an object\",\"1.1.1.1\":{\"is_vpn\":true},\"9.9.9.9\":{\"ip\":\"9.9.9.9\",\"is_vpn\":false}}}",
+        .verbatim = true,
+    });
+    var client = try harness.client(.{ .retries = 2 });
+    defer client.deinit();
+    var batch = try client.lookupBatch(&.{ "8.8.8.8", "1.1.1.1", "9.9.9.9" }, .{});
+    defer batch.deinit();
+
+    try std.testing.expectEqual(1, harness.stub.callCount());
+    for ([_][]const u8{ "8.8.8.8", "1.1.1.1" }) |ip| switch (batch.get(ip).?) {
+        .ok => return error.TestUnexpectedResult,
+        .failed => |failure| {
+            try std.testing.expectEqual(error.ServerError, failure.err);
+            try std.testing.expectEqual(@as(?u16, 200), failure.diagnostics.status);
+        },
+    };
+    try std.testing.expect(batch.get("9.9.9.9").? == .ok);
+}
+
 test "isBogon is on the client and agrees with the standalone function" {
     const gpa = std.testing.allocator;
     const data = try support.corpus.load(gpa);

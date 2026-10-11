@@ -73,6 +73,8 @@ std.debug.print("{s}\n", .{result.value.vpn.?.provider.?});       // mullvad
 std.debug.print("{}\n", .{result.value.is_hosting orelse false}); // true
 ```
 
+The blanks around a key, a file's trailing newline among them, are dropped, and a key of blanks alone is no key at all. A key holding any other control character is refused: every call that would send it fails with `BadRequest` before anything leaves the client.
+
 ### Your own address
 
 ```zig

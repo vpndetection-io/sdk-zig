@@ -197,6 +197,83 @@ pub fn backOff(io: Io, diag: *const Diagnostics, delay: *Io.Duration) bool {
     return true;
 }
 
+/// Repeats `attemptFn`, one request AND the read of its answer, the way `send`
+/// repeats a request alone: an answer the call cannot read is the server's
+/// fault like any 5xx, so it is retried too, carrying the status it came with.
+/// Read after the retries were spent, as through 4.5.2, it failed after
+/// exactly one request. `attemptFn` sends with no retries of its own; a wait
+/// canceled between attempts ends the call and sets `canceled`.
+pub fn retrying(
+    comptime T: type,
+    io: Io,
+    retries: u32,
+    diag: *const Diagnostics,
+    canceled: ?*bool,
+    context: anytype,
+    comptime attemptFn: fn (@TypeOf(context)) CallError!T,
+) CallError!T {
+    var delay = retry_base_delay;
+    var remaining = retries;
+    while (true) {
+        if (attemptFn(context)) |value| {
+            return value;
+        } else |err| {
+            if (remaining == 0 or !errors.isRetryable(err)) {
+                return err;
+            }
+            if (!backOff(io, diag, &delay)) {
+                if (canceled) |flag| {
+                    flag.* = true;
+                }
+                return err;
+            }
+            remaining -= 1;
+        }
+    }
+}
+
+/// A GET whose answer is parsed into `T`, owned by the caller: each attempt is
+/// the request and the parse together, under `retrying`. Parsed from a copy
+/// the arena owns, so every string in the answer outlives the body.
+pub fn getParsed(
+    comptime T: type,
+    transport: *Transport,
+    gpa: Allocator,
+    io: Io,
+    request: Request,
+) CallError!std.json.Parsed(T) {
+    const Attempt = struct {
+        transport: *Transport,
+        gpa: Allocator,
+        io: Io,
+        request: Request,
+
+        fn run(self: @This()) CallError!std.json.Parsed(T) {
+            var single = self.request;
+            single.retries = 0;
+            const body = try send(self.transport, self.gpa, self.io, single);
+            defer self.gpa.free(body);
+
+            const parsed = try self.gpa.create(std.heap.ArenaAllocator);
+            errdefer self.gpa.destroy(parsed);
+            parsed.* = .init(self.gpa);
+            errdefer parsed.deinit();
+
+            const arena = parsed.allocator();
+            const owned = try arena.dupe(u8, body);
+            const value = std.json.parseFromSliceLeaky(T, arena, owned, .{
+                .ignore_unknown_fields = true,
+            }) catch {
+                self.request.diagnostics.setMessage("the answer did not match the documented shape");
+                return error.ServerError;
+            };
+            return .{ .arena = parsed, .value = value };
+        }
+    };
+    const once: Attempt = .{ .transport = transport, .gpa = gpa, .io = io, .request = request };
+    return retrying(std.json.Parsed(T), io, request.retries, request.diagnostics, null, once, Attempt.run);
+}
+
 /// One OAuth request: a GET, or a POST of a form body that is already encoded.
 pub const OauthRequest = struct {
     method: std.http.Method = .GET,
@@ -426,17 +503,30 @@ pub const Transport = struct {
     }
 
     fn open(self: *Transport, url: []const u8, diag: *Diagnostics) CallError!std.http.Client.Request {
-        const authorization: std.http.Client.Request.Headers.Value =
-            if (self.authorization) |value| .{ .override = value } else .omit;
-        return self.openWith(url, authorization, .default, diag);
+        return self.openWith(url, try self.authorizationHeader(diag), .default, diag);
+    }
+
+    /// The `Authorization` a request carries. `std.http.Client` writes a header
+    /// value out as given, so a control character left inside the key would
+    /// reach the wire, and a CR LF would start a header of its own. Refused
+    /// here, before anything is sent, because `Client.init`'s error set has no
+    /// member for it.
+    fn authorizationHeader(self: *const Transport, diag: *Diagnostics) CallError!std.http.Client.Request.Headers.Value {
+        const value = self.authorization orelse return .omit;
+        for (value) |c| {
+            if (c < 0x20 or c == 0x7f) {
+                diag.setMessage("the API key holds a control character");
+                return error.BadRequest;
+            }
+        }
+        return .{ .override = value };
     }
 
     /// A POST with a JSON body, opened but not yet sent: the caller hands the
     /// body to `sendBodyComplete`, which writes head and body together.
     fn openPost(self: *Transport, url: []const u8, diag: *Diagnostics) CallError!std.http.Client.Request {
         const uri = std.Uri.parse(url) catch |err| return fail(diag, err);
-        const authorization: std.http.Client.Request.Headers.Value =
-            if (self.authorization) |value| .{ .override = value } else .omit;
+        const authorization = try self.authorizationHeader(diag);
         var request = self.http.request(.POST, uri, .{
             .redirect_behavior = .unhandled,
             .headers = .{

@@ -129,14 +129,15 @@ pub const Client = struct {
 
         // Bearer only. The API also accepts X-Api-Key and ?apikey=; a key
         // belongs in one header, not in a query string a proxy will log.
-        // An EMPTY key is treated as no key. It is what an unset environment
-        // variable or CI secret interpolates to, and `Bearer ` with nothing
-        // behind it is never what anyone meant - the API would reject it, but
-        // as an unauthorized request rather than as the anonymous one intended.
-        const authorization = if (options.api_key) |key|
-            (if (key.len == 0) null else try std.fmt.allocPrint(gpa, "Bearer {s}", .{key}))
-        else
-            null;
+        // The blanks around a key, a file's newline among them, are no part of
+        // it, and a key of blanks alone is no key. That is what an unset
+        // environment variable or CI secret interpolates to, and `Bearer ` with
+        // nothing behind it is never what anyone meant - the API would reject
+        // it, but as an unauthorized request rather than as the anonymous one
+        // intended. A control character left inside is refused by every call
+        // that would send it.
+        const key = std.mem.trim(u8, options.api_key orelse "", " \t\r\n");
+        const authorization = if (key.len == 0) null else try std.fmt.allocPrint(gpa, "Bearer {s}", .{key});
         errdefer if (authorization) |value| gpa.free(value);
 
         var cache: ?cache_mod.Cache = null;
@@ -242,7 +243,7 @@ pub const Client = struct {
         flight: ?*cache_mod.Cache.Flight,
     ) CallError!Lookup {
         var canceled = false;
-        const body = self.fetch(carried, options, timeout, diag, &canceled) catch |err| {
+        const result = self.ask(carried, options, timeout, diag, &canceled) catch |err| {
             if (flight) |led| {
                 self.cache.?.land(self.io, carried, led, if (canceled)
                     .abandoned
@@ -251,40 +252,33 @@ pub const Client = struct {
             }
             return err;
         };
-        defer self.gpa.free(body);
-
-        const result = self.parse(body, diag) catch |err| {
-            if (flight) |led| {
-                self.cache.?.land(self.io, carried, led, .{ .failed = .{ .err = err, .diagnostics = diag.* } });
-            }
-            return err;
-        };
         if (flight) |led| {
-            self.cache.?.land(self.io, carried, led, .{ .served = body });
+            self.cache.?.land(self.io, carried, led, .{ .served = result.raw });
         }
         return result;
     }
 
-    fn fetch(
+    fn ask(
         self: *Client,
         carried: []const u8,
         options: CallOptions,
         timeout: Io.Duration,
         diag: *Diagnostics,
         canceled: *bool,
-    ) CallError![]u8 {
+    ) CallError!Lookup {
         var path: std.ArrayList(u8) = .empty;
         defer path.deinit(self.gpa);
         try path.append(self.gpa, '/');
         try http.appendEncoded(self.gpa, &path, carried);
 
-        return http.send(&self.transport, self.gpa, self.io, .{
+        const attempt: LookupAttempt = .{
+            .client = self,
             .path = path.items,
-            .retries = options.retries orelse self.retries,
             .timeout = timeout,
-            .diagnostics = diag,
+            .diag = diag,
             .canceled = canceled,
-        });
+        };
+        return http.retrying(Lookup, self.io, options.retries orelse self.retries, diag, canceled, attempt, LookupAttempt.run);
     }
 
     /// Waits for another caller's request. A waiter canceled meanwhile returns
@@ -323,14 +317,13 @@ pub const Client = struct {
         const diag = options.diagnostics orelse &scratch;
         diag.reset();
 
-        const body = try http.send(&self.transport, self.gpa, self.io, .{
+        const attempt: LookupAttempt = .{
+            .client = self,
             .path = "/myip",
-            .retries = options.retries orelse self.retries,
             .timeout = options.timeout orelse self.timeout,
-            .diagnostics = diag,
-        });
-        defer self.gpa.free(body);
-        return self.parse(body, diag);
+            .diag = diag,
+        };
+        return http.retrying(Lookup, self.io, options.retries orelse self.retries, diag, null, attempt, LookupAttempt.run);
     }
 
     /// What this client's key is entitled to, and how much of it has been used.
@@ -361,30 +354,12 @@ pub const Client = struct {
         const diag = options.diagnostics orelse &scratch;
         diag.reset();
 
-        const body = try http.send(&self.transport, self.gpa, self.io, .{
+        return http.getParsed(Entitlement, &self.transport, self.gpa, self.io, .{
             .path = "/api/v1/entitlement",
             .retries = options.retries orelse self.retries,
             .timeout = options.timeout orelse self.timeout,
             .diagnostics = diag,
         });
-        defer self.gpa.free(body);
-
-        const parsed = try self.gpa.create(std.heap.ArenaAllocator);
-        errdefer self.gpa.destroy(parsed);
-        parsed.* = .init(self.gpa);
-        errdefer parsed.deinit();
-
-        const arena = parsed.allocator();
-        // Parsed from a copy the arena owns, so every string in the answer
-        // outlives the body this call frees.
-        const owned = try arena.dupe(u8, body);
-        const value = std.json.parseFromSliceLeaky(Entitlement, arena, owned, .{
-            .ignore_unknown_fields = true,
-        }) catch {
-            diag.setMessage("the answer did not match the documented shape");
-            return error.ServerError;
-        };
-        return .{ .arena = parsed, .value = value };
     }
 
     /// Classifies many addresses in as few requests as possible. The caller
@@ -649,23 +624,14 @@ pub const Client = struct {
         const request_body = try std.json.Stringify.valueAlloc(self.gpa, .{ .ips = addresses.items }, .{});
         defer self.gpa.free(request_body);
 
-        const body = try http.send(&self.transport, self.gpa, self.io, .{
-            .method = .POST,
-            .path = "/batch",
+        const attempt: ChunkAttempt = .{
+            .client = self,
             .body = request_body,
-            .retries = work.retries orelse self.retries,
             .timeout = work.timeout orelse self.timeout,
-            .diagnostics = diag,
-        });
-        defer self.gpa.free(body);
-
-        var parsed = std.json.parseFromSlice(std.json.Value, self.gpa, body, .{}) catch |err| switch (err) {
-            error.OutOfMemory => return error.OutOfMemory,
-            else => {
-                diag.setMessage("the answer was not a batch response");
-                return error.ServerError;
-            },
+            .diag = diag,
         };
+        const retries = work.retries orelse self.retries;
+        var parsed = try http.retrying(Parsed(std.json.Value), self.io, retries, diag, null, attempt, ChunkAttempt.run);
         defer parsed.deinit();
         const results = member(parsed.value, "results");
         const failures = member(parsed.value, "errors");
@@ -693,6 +659,7 @@ pub const Client = struct {
                 const answer = self.parse(encoded, &diag) catch |err| switch (err) {
                     error.OutOfMemory => return error.OutOfMemory,
                     else => {
+                        diag.status = 200;
                         self.landEntry(work, index, .{ .failed = .{ .err = err, .diagnostics = diag } });
                         return .{ .failed = .{ .err = err, .diagnostics = diag } };
                     },
@@ -792,6 +759,70 @@ pub const Batch = struct {
 };
 
 /// A batch entry whose carried address an earlier entry was asked under.
+/// One request for a lookup-shaped answer and the read of it, which
+/// `http.retrying` repeats: a body that is not a lookup is retried like a 5xx.
+const LookupAttempt = struct {
+    client: *Client,
+    path: []const u8,
+    timeout: Io.Duration,
+    diag: *Diagnostics,
+    canceled: ?*bool = null,
+
+    fn run(self: LookupAttempt) CallError!Lookup {
+        const body = try http.send(&self.client.transport, self.client.gpa, self.client.io, .{
+            .path = self.path,
+            .retries = 0,
+            .timeout = self.timeout,
+            .diagnostics = self.diag,
+            .canceled = self.canceled,
+        });
+        defer self.client.gpa.free(body);
+        return self.client.parse(body, self.diag);
+    }
+};
+
+/// One `POST /batch` and the read of its answer, which `http.retrying`
+/// repeats. An answer holding neither map cannot be read as a whole and is
+/// retried like a 5xx; one entry that cannot be read is that address's error
+/// alone, never retried.
+const ChunkAttempt = struct {
+    client: *Client,
+    body: []const u8,
+    timeout: Io.Duration,
+    diag: *Diagnostics,
+
+    fn run(self: ChunkAttempt) CallError!Parsed(std.json.Value) {
+        const gpa = self.client.gpa;
+        const body = try http.send(&self.client.transport, gpa, self.client.io, .{
+            .method = .POST,
+            .path = "/batch",
+            .body = self.body,
+            .retries = 0,
+            .timeout = self.timeout,
+            .diagnostics = self.diag,
+        });
+        defer gpa.free(body);
+
+        // Every string is copied, since the body is freed before the entries
+        // are read.
+        const parsed = std.json.parseFromSlice(std.json.Value, gpa, body, .{
+            .allocate = .alloc_always,
+        }) catch |err| switch (err) {
+            error.OutOfMemory => return error.OutOfMemory,
+            else => {
+                self.diag.setMessage("the answer was not a batch response");
+                return error.ServerError;
+            },
+        };
+        if (member(parsed.value, "results") == null and member(parsed.value, "errors") == null) {
+            parsed.deinit();
+            self.diag.setMessage("the answer was not a batch response");
+            return error.ServerError;
+        }
+        return parsed;
+    }
+};
+
 const Follower = struct {
     index: usize,
     leader: usize,

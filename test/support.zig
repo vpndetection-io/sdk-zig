@@ -35,6 +35,9 @@ pub const Route = struct {
     /// Writes each byte of the body after the stall on its own, this far apart,
     /// so no one read waits long however long the whole body takes.
     trickle: Io.Duration = .zero,
+    /// On `/batch`, sent as it is rather than shaping only the pace of the
+    /// answer the stub builds, so a test can serve a chunk no client can read.
+    verbatim: bool = false,
 
     pub const Header = struct { name: []const u8, value: []const u8 };
 
@@ -279,7 +282,8 @@ fn serve(self: *Stub, stream: Io.net.Stream) void {
 
     // An unrouted address gets what the real API gives one, so a test that
     // forgets a route fails as a bad request rather than as a hang.
-    var answer = if (std.mem.eql(u8, path, "/batch"))
+    const verbatim = if (found) |route| route.verbatim else false;
+    var answer = if (std.mem.eql(u8, path, "/batch") and !verbatim)
         (if (batchAnswer(self, body)) |text| Route.ok(text) else |_| Route{
             .status = 500,
             .body = "{\"error\":\"the stub could not build the batch answer\"}",
