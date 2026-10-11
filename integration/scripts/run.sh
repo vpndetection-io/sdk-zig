@@ -65,6 +65,12 @@ function main() {
     cp build.zig.zon "$manifestBackup"
     trap restoreManifest EXIT
 
+    # zig 0.16 unpacks a fetch into zig-pkg/<hash>, and keeps a directory
+    # already there under that name without reading it again: a copy an earlier
+    # run left, edited since, is what the build would use, while every line
+    # here names the release. So nothing is left there to be found.
+    rm -rf zig-pkg
+
     if [ -n "$LOCAL_PATH" ] ; then
         saveLocalDependency
     else
@@ -193,9 +199,12 @@ function zigRun() {
     ZIG_WORKDIR=integration ../scripts/zig.sh "$@"
 }
 
+# Written back over the file rather than moved onto it, which would leave it
+# with mktemp's owner-only mode.
 function restoreManifest() {
     if [ -n "$manifestBackup" ] ; then
-        mv -f "$manifestBackup" build.zig.zon
+        cat "$manifestBackup" > build.zig.zon
+        rm -f "$manifestBackup"
     fi
 }
 
