@@ -2,6 +2,14 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.5.3 - 2026-10-11
+
+### Fixes
+
+- Read Retry-After as digits or an RFC 9110 date in GMT ([`e72d9d3`](https://github.com/vpndetection-io/sdk-zig/commit/e72d9d39370dea46d93c5e5b5ec86762d911aa63))
+- Refuse a key holding a control character, and retry an unreadable 2xx ([`7cf56c9`](https://github.com/vpndetection-io/sdk-zig/commit/7cf56c972444e70c5589f218ecf85b04fc2a16e1))
+- Clear the integration runner's package cache before each fetch ([`18c4a70`](https://github.com/vpndetection-io/sdk-zig/commit/18c4a70eb38b06c3fb8764fe992b5ee63fa8a3e0))
+
 ## 4.5.2 - 2026-10-10
 
 ### Fixes
