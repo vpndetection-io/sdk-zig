@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.5.4 - 2026-10-15
+
+### Fixes
+
+- Retry an unreadable answer to OAuth discovery and device authorization ([`c421a29`](https://github.com/vpndetection-io/sdk-zig/commit/c421a2955b6b697eb56e6d4c8a8dd85fd9d944de))
+
 ## 4.5.3 - 2026-10-11
 
 ### Fixes
