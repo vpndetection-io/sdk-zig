@@ -298,6 +298,49 @@ test "a 2xx without a required member is an ordinary error" {
     }
 }
 
+// Discovery and device authorization take the client's retries, so a 2xx they
+// cannot read is sent again like a 5xx; an exchange spends what it presents and
+// is sent once. Either way it is `error.ServerError` with the status kept.
+test "an unreadable 2xx is retried where the call takes the client's retries" {
+    const gpa = std.testing.allocator;
+    const bodies = [_][]const u8{
+        "<html><body>502 Bad Gateway</body></html>",
+        "",
+        "null",
+        "[]",
+        "{}",
+        "{\"issuer\": \"https://",
+    };
+    const sends = [_]struct { operation: []const u8, requests: usize }{
+        .{ .operation = "metadata", .requests = 3 },
+        .{ .operation = "deviceAuthorization", .requests = 3 },
+        .{ .operation = "exchangeDeviceCode", .requests = 1 },
+        .{ .operation = "exchangeRefreshToken", .requests = 1 },
+    };
+    for (sends) |each| {
+        for (bodies) |body| {
+            const harness = try Harness.start(gpa);
+            defer harness.deinit();
+            try routeEveryPath(harness, .ok(body));
+            var client = try harness.client(.{ .retries = 2 });
+            defer client.deinit();
+
+            var diagnostics: vpndetection.Diagnostics = .{};
+            const args: corpus.OauthArgs = .{ .deviceCode = "x", .refreshToken = "x" };
+            const outcome = callOperationWith(&client, each.operation, args, &diagnostics);
+            std.testing.expectError(error.ServerError, outcome) catch |err| {
+                std.debug.print("{s} {s}\n", .{ each.operation, body });
+                return err;
+            };
+            std.testing.expectEqual(each.requests, harness.stub.callCount()) catch |err| {
+                std.debug.print("{s} {s}: requests\n", .{ each.operation, body });
+                return err;
+            };
+            try std.testing.expectEqual(@as(?u16, 200), diagnostics.status);
+        }
+    }
+}
+
 test "the poll follows every corpus case" {
     const gpa = std.testing.allocator;
     const data = try corpus.load(gpa);

@@ -94,15 +94,12 @@ pub const OauthApi = struct {
     /// every request is built from the client's base URL.
     pub fn metadata(self: OauthApi, options: OauthOptions) OauthCallError!Parsed(OauthMetadata) {
         var scratch: Diagnostics = .{};
-        const diag = options.diagnostics orelse &scratch;
-        const body = try http.sendOauth(&self.client.transport, self.client.gpa, self.client.io, .{
+        return self.fetch(OauthMetadata, .{
             .path = "/.well-known/oauth-authorization-server",
             .retries = self.client.retries,
             .timeout = options.timeout orelse self.client.timeout,
-            .diagnostics = diag,
+            .diagnostics = options.diagnostics orelse &scratch,
         });
-        defer self.client.gpa.free(body);
-        return self.decode(OauthMetadata, body, diag);
     }
 
     /// Starts a device sign-in. Show the person `user_code` and
@@ -131,13 +128,17 @@ pub const OauthApi = struct {
                 count += 1;
             }
         }
-        const body = try self.post("/oauth/device_authorization", fields[0..count], .{
+        const gpa = self.client.gpa;
+        const form = try encodeForm(gpa, fields[0..count]);
+        defer gpa.free(form);
+        return self.fetch(DeviceAuthorization, .{
+            .method = .POST,
+            .path = "/oauth/device_authorization",
+            .form = form,
             .retries = self.client.retries,
-            .timeout = options.timeout,
+            .timeout = options.timeout orelse self.client.timeout,
             .diagnostics = diag,
         });
-        defer self.client.gpa.free(body);
-        return self.decode(DeviceAuthorization, body, diag);
     }
 
     /// Exchanges an approved device code for tokens, once.
@@ -389,6 +390,38 @@ pub const OauthApi = struct {
             .apikey_id = wire.value.@"mslm:apikey_id",
             .apikey = wire.value.@"mslm:apikey",
         } };
+    }
+
+    /// A call that consumes nothing, under the client's retries. Each attempt is
+    /// the request AND the decode of its answer, so a 2xx that does not parse is
+    /// retried like a 5xx, its status kept: decoded after the retries were spent,
+    /// an HTML 200 was one request (4.5.3, measured 2026-10-15).
+    fn fetch(self: OauthApi, comptime T: type, request: http.OauthRequest) OauthCallError!Parsed(T) {
+        var delay = http.retry_base_delay;
+        var remaining = request.retries;
+        var single = request;
+        single.retries = 0;
+        while (true) {
+            if (self.fetchOnce(T, single)) |parsed| {
+                return parsed;
+            } else |err| switch (err) {
+                error.OauthAccessDenied, error.OauthExpiredToken, error.OauthRejected => return err,
+                else => |ordinary| {
+                    if (remaining == 0 or !errors.isRetryable(ordinary) or
+                        !http.backOff(self.client.io, request.diagnostics, &delay))
+                    {
+                        return ordinary;
+                    }
+                    remaining -= 1;
+                },
+            }
+        }
+    }
+
+    fn fetchOnce(self: OauthApi, comptime T: type, request: http.OauthRequest) OauthCallError!Parsed(T) {
+        const body = try http.sendOauth(&self.client.transport, self.client.gpa, self.client.io, request);
+        defer self.client.gpa.free(body);
+        return self.decode(T, body, request.diagnostics);
     }
 
     fn post(self: OauthApi, path: []const u8, fields: []const Field, sending: Sending) OauthCallError![]u8 {
