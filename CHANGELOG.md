@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.6.0 - 2026-10-17
+
+### Features
+
+- Re-pin the spec to 2026.10.16: dynamic client registration ([`e4a4843`](https://github.com/vpndetection-io/sdk-zig/commit/e4a48439851b671df91ac2aa244f82d63c07c875))
+- Build and test on Zig 0.17.0 as well ([`c08f4b2`](https://github.com/vpndetection-io/sdk-zig/commit/c08f4b21d674c5c47a4fd52d0078e327bc1bd691))
+
 ## 4.5.5 - 2026-10-16
 
 ### Fixes
