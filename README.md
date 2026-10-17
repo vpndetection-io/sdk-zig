@@ -20,7 +20,7 @@ const vpndetection = b.dependency("vpndetection", .{ .target = target, .optimize
 exe.root_module.addImport("vpndetection", vpndetection.module("vpndetection"));
 ```
 
-Requires Zig **0.16.0**. Zig is pre-1.0 and its standard library still changes shape between releases, so no other version is supported; this one is pinned in CI and in `scripts/Dockerfile`.
+Requires Zig **0.16.0** or **0.17.0**. Zig is pre-1.0 and its standard library still changes shape between releases, so no other version is supported; CI builds and tests on both, and 0.16.0 is pinned in `scripts/Dockerfile`.
 
 ## Usage
 
@@ -69,7 +69,7 @@ const result = try client.lookup("45.83.91.1");
 defer result.deinit();
 
 std.debug.print("{}\n", .{result.value.is_vpn});                  // true
-std.debug.print("{s}\n", .{result.value.vpn.?.provider.?});       // mullvad
+std.debug.print("{s}\n", .{result.value.vpn.?.provider.?});       // nordvpn
 std.debug.print("{}\n", .{result.value.is_hosting orelse false}); // true
 ```
 

@@ -14,6 +14,7 @@ const Route = support.Route;
 
 const ip = "9.9.9.9";
 const lookup_body = "{\"ip\":\"9.9.9.9\",\"is_vpn\":false}";
+const padded_lookup_body = @as([300]u8, @splat(' ')) ++ lookup_body.*;
 /// Longer than any bound under test, so an unbounded call fails its elapsed
 /// assertion instead of hanging. Tearing the stub down ends it early.
 const stall: Io.Duration = .fromSeconds(5);
@@ -28,7 +29,7 @@ test "a trickled body times out at the bound and its connection is dropped" {
     const harness = try Harness.start(gpa);
     defer harness.deinit();
     try harness.stub.route("/" ++ ip, .{
-        .body = (" " ** 300) ++ lookup_body,
+        .body = &padded_lookup_body,
         .trickle = .fromMilliseconds(20),
     });
     var client = try harness.client(.{ .retries = 0, .timeout = .fromMilliseconds(250) });
@@ -217,7 +218,7 @@ test "a download that runs past the timeout still completes" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
     defer harness.deinit();
-    const body = "0123456789abcdef" ** 4;
+    const body = "0123456789abcdef" ++ "0123456789abcdef" ++ "0123456789abcdef" ++ "0123456789abcdef";
     try routeDownload(harness, .{ .body = body, .stall = .fromMilliseconds(600), .stall_after = 16 });
 
     var scratch = support.Scratch.start();

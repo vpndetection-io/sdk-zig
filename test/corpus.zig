@@ -284,9 +284,9 @@ pub const Member = union(enum) {
 };
 
 pub fn member(answer: Answer, name: []const u8) Member {
-    inline for (std.meta.fields(Answer)) |field| {
-        if (std.mem.eql(u8, field.name, name)) {
-            return stateOf(field.type, @field(answer, field.name));
+    inline for (comptime std.meta.fieldNames(Answer)) |field_name| {
+        if (std.mem.eql(u8, field_name, name)) {
+            return stateOf(@FieldType(Answer, field_name), @field(answer, field_name));
         }
     }
     return .unknown;
@@ -302,8 +302,8 @@ fn stateOf(comptime T: type, value: T) Member {
 }
 
 fn allNull(value: anytype) bool {
-    inline for (std.meta.fields(@TypeOf(value))) |field| {
-        if (@field(value, field.name) != null) {
+    inline for (comptime std.meta.fieldNames(@TypeOf(value))) |field_name| {
+        if (@field(value, field_name) != null) {
             return false;
         }
     }
@@ -317,14 +317,14 @@ pub fn expectDetail(expected: std.json.Value, actual: anytype) !void {
     try std.testing.expect(expected == .object);
     const want = expected.object;
     var matched: usize = 0;
-    inline for (std.meta.fields(@TypeOf(actual))) |field| {
-        if (want.get(field.name)) |value| {
+    inline for (comptime std.meta.fieldNames(@TypeOf(actual))) |field_name| {
+        if (want.get(field_name)) |value| {
             matched += 1;
-            const got = @field(actual, field.name) orelse {
-                std.debug.print("{s} is absent, expected {f}\n", .{ field.name, std.json.fmt(value, .{}) });
+            const got = @field(actual, field_name) orelse {
+                std.debug.print("{s} is absent, expected {f}\n", .{ field_name, std.json.fmt(value, .{}) });
                 return error.TestExpectedEqual;
             };
-            if (comptime @typeInfo(field.type).optional.child == []const u8) {
+            if (comptime @typeInfo(@FieldType(@TypeOf(actual), field_name)).optional.child == []const u8) {
                 try std.testing.expectEqualStrings(value.string, got);
             } else {
                 try std.testing.expectEqual(value.integer, got);

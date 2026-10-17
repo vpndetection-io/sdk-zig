@@ -29,3 +29,16 @@ jobs:
       # Nothing generates the response model, so this is what catches a spec
       # that moved.
       - run: ./scripts/check-spec.sh
+
+  # The newest supported Zig beside the pinned one. Formatting is checked on
+  # the pinned version alone: 0.17's `zig fmt` rewrites `@intFromEnum` to
+  # `@backingInt`, which 0.16 does not have.
+  newest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: 0.17.0
+      - run: zig build test
+      - run: zig build example

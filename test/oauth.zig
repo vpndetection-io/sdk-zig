@@ -592,21 +592,21 @@ fn expectMembers(
 }
 
 fn expectMember(value: anytype, member: []const u8, want: std.json.Value) !void {
-    inline for (std.meta.fields(@TypeOf(value))) |field| {
-        if (std.mem.eql(u8, field.name, member)) {
-            return expectValue(field.type, @field(value, field.name), want);
+    inline for (comptime std.meta.fieldNames(@TypeOf(value))) |field_name| {
+        if (std.mem.eql(u8, field_name, member)) {
+            return expectValue(@FieldType(@TypeOf(value), field_name), @field(value, field_name), want);
         }
     }
     return error.TestUnknownMember;
 }
 
 fn expectAbsent(value: anytype, member: []const u8) !void {
-    inline for (std.meta.fields(@TypeOf(value))) |field| {
-        if (std.mem.eql(u8, field.name, member)) {
-            if (@typeInfo(field.type) != .optional) {
+    inline for (comptime std.meta.fieldNames(@TypeOf(value))) |field_name| {
+        if (std.mem.eql(u8, field_name, member)) {
+            if (@typeInfo(@FieldType(@TypeOf(value), field_name)) != .optional) {
                 return error.TestRequiredMemberCannotBeAbsent;
             }
-            return std.testing.expect(@field(value, field.name) == null);
+            return std.testing.expect(@field(value, field_name) == null);
         }
     }
     return error.TestUnknownMember;
@@ -759,9 +759,9 @@ fn endpointOf(operation: []const u8) []const u8 {
 }
 
 fn endpointNamed(oauth_data: corpus.Oauth, name: []const u8) corpus.Endpoint {
-    inline for (std.meta.fields(@TypeOf(oauth_data.endpoints))) |field| {
-        if (std.mem.eql(u8, field.name, name)) {
-            return @field(oauth_data.endpoints, field.name);
+    inline for (comptime std.meta.fieldNames(@TypeOf(oauth_data.endpoints))) |field_name| {
+        if (std.mem.eql(u8, field_name, name)) {
+            return @field(oauth_data.endpoints, field_name);
         }
     }
     std.debug.panic("the corpus names no endpoint {s}", .{name});

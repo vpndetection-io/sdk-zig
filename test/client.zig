@@ -326,8 +326,8 @@ test "a 2xx no call can read is retried, carrying its status" {
         var client = try harness.client(.{ .retries = 1 });
         defer client.deinit();
         var statuses: [paths.len]?u16 = undefined;
-        var failed: [paths.len]?anyerror = .{null} ** paths.len;
-        var diagnostics: [paths.len]vpndetection.Diagnostics = .{vpndetection.Diagnostics{}} ** paths.len;
+        var failed: [paths.len]?anyerror = @splat(null);
+        var diagnostics: [paths.len]vpndetection.Diagnostics = @splat(.{});
 
         if (client.lookupWith("1.1.1.1", .{ .diagnostics = &diagnostics[0] })) |answer| answer.deinit() else |err| failed[0] = err;
         if (client.myIpWith(.{ .diagnostics = &diagnostics[1] })) |answer| answer.deinit() else |err| failed[1] = err;
