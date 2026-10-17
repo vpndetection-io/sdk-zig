@@ -484,6 +484,7 @@ pub const OauthMetadata = struct {
     token_endpoint_auth_methods_supported: ?[]const []const u8 = null,
     authorization_response_iss_parameter_supported: ?bool = null,
     client_id_metadata_document_supported: ?bool = null,
+    registration_endpoint: ?[]const u8 = null,
     service_documentation: ?[]const u8 = null,
 };
 
