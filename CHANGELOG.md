@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.7.0 - 2026-10-18
+
+### Features
+
+- Re-pin the spec to 2026.10.18: is_pubproxy and the pubproxy detail ([`8e2a96c`](https://github.com/vpndetection-io/sdk-zig/commit/8e2a96c21b18316f3dac66781a6612ccb96ebae8))
+
 ## 4.6.0 - 2026-10-17
 
 ### Features
