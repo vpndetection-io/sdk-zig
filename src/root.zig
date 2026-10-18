@@ -53,6 +53,7 @@ pub const Answer = @import("lookup.zig").Answer;
 pub const ClassDetail = @import("lookup.zig").ClassDetail;
 pub const Lookup = @import("lookup.zig").Lookup;
 pub const ProxyDetail = @import("lookup.zig").ProxyDetail;
+pub const PubproxyDetail = @import("lookup.zig").PubproxyDetail;
 pub const VpnDetail = @import("lookup.zig").VpnDetail;
 
 pub const DatabaseApi = @import("database.zig").DatabaseApi;

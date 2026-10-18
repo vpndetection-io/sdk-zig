@@ -32,6 +32,7 @@ pub const Answer = struct {
     is_resproxy: ?bool = null,
     is_dcproxy: ?bool = null,
     is_mobproxy: ?bool = null,
+    is_pubproxy: ?bool = null,
     vpn: ?VpnDetail = null,
     hosting: ?ClassDetail = null,
     relay: ?ClassDetail = null,
@@ -40,6 +41,7 @@ pub const Answer = struct {
     resproxy: ?ProxyDetail = null,
     dcproxy: ?ProxyDetail = null,
     mobproxy: ?ProxyDetail = null,
+    pubproxy: ?PubproxyDetail = null,
 };
 
 /// Dates arrive as `YYYY-MM-DD` strings and stay strings: Zig has no date type
@@ -68,6 +70,19 @@ pub const ProxyDetail = struct {
     hits: ?i64 = null,
     hits_days_pct: ?i64 = null,
     providers_num: ?i64 = null,
+};
+
+/// The address in Public Proxy IP, open proxies anyone can connect through,
+/// over a rolling 90 day window: whether a public proxy listens on it
+/// (`entry`), whether one's traffic leaves from it (`exit`), and their
+/// protocols, empty where only the address is known. `last_usable` is the
+/// empty string when no request through a proxy on the address was answered.
+pub const PubproxyDetail = struct {
+    entry: ?bool = null,
+    exit: ?bool = null,
+    protocols: ?[]const []const u8 = null,
+    last_seen: ?[]const u8 = null,
+    last_usable: ?[]const u8 = null,
 };
 
 /// One answer, and the memory behind it.
@@ -129,6 +144,7 @@ pub fn bogonLookup(gpa: Allocator, ip: []const u8) Allocator.Error!Lookup {
         .is_resproxy = false,
         .is_dcproxy = false,
         .is_mobproxy = false,
+        .is_pubproxy = false,
         .vpn = .{},
         .hosting = .{},
         .relay = .{},
@@ -137,6 +153,7 @@ pub fn bogonLookup(gpa: Allocator, ip: []const u8) Allocator.Error!Lookup {
         .resproxy = .{},
         .dcproxy = .{},
         .mobproxy = .{},
+        .pubproxy = .{},
     };
     return lookup;
 }

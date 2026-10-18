@@ -70,6 +70,7 @@ pub const LookupExpect = struct {
     vpn: ?std.json.Value = null,
     hosting: ?std.json.Value = null,
     dcproxy: ?std.json.Value = null,
+    pubproxy: ?std.json.Value = null,
 };
 
 pub const ErrorCase = struct {
@@ -324,8 +325,16 @@ pub fn expectDetail(expected: std.json.Value, actual: anytype) !void {
                 std.debug.print("{s} is absent, expected {f}\n", .{ field_name, std.json.fmt(value, .{}) });
                 return error.TestExpectedEqual;
             };
-            if (comptime @typeInfo(@FieldType(@TypeOf(actual), field_name)).optional.child == []const u8) {
+            const Child = @typeInfo(@FieldType(@TypeOf(actual), field_name)).optional.child;
+            if (comptime Child == []const u8) {
                 try std.testing.expectEqualStrings(value.string, got);
+            } else if (comptime Child == bool) {
+                try std.testing.expectEqual(value.bool, got);
+            } else if (comptime Child == []const []const u8) {
+                try std.testing.expectEqual(value.array.items.len, got.len);
+                for (value.array.items, got) |want_item, got_item| {
+                    try std.testing.expectEqualStrings(want_item.string, got_item);
+                }
             } else {
                 try std.testing.expectEqual(value.integer, got);
             }

@@ -158,6 +158,9 @@ test "a lookup preserves absent versus false across every plan shape" {
         if (case.expect.dcproxy) |expected| {
             try corpus.expectDetail(expected, result.value.dcproxy.?);
         }
+        if (case.expect.pubproxy) |expected| {
+            try corpus.expectDetail(expected, result.value.pubproxy.?);
+        }
     }
 }
 
