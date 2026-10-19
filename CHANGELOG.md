@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.8.0 - 2026-10-19
+
+### Features
+
+- Re-pin the spec to 2026.10.19: num_ports and num_proxies in the pubproxy detail ([`df7a5b2`](https://github.com/vpndetection-io/sdk-zig/commit/df7a5b206eaa970f09b940ab76be34e3f50bcd16))
+
 ## 4.7.0 - 2026-10-18
 
 ### Features
