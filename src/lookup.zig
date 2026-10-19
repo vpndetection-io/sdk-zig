@@ -75,12 +75,17 @@ pub const ProxyDetail = struct {
 /// The address in Public Proxy IP, open proxies anyone can connect through,
 /// over a rolling 90 day window: whether a public proxy listens on it
 /// (`entry`), whether one's traffic leaves from it (`exit`), and their
-/// protocols, empty where only the address is known. `last_usable` is the
-/// empty string when no request through a proxy on the address was answered.
+/// protocols, empty where only the address is known. `num_ports` counts the
+/// ports a proxy listens on there (0 when it is only an exit) and `num_proxies`
+/// the proxies whose traffic left from it (0 when it is only an entry).
+/// `last_usable` is the empty string when no request through a proxy on the
+/// address was answered.
 pub const PubproxyDetail = struct {
     entry: ?bool = null,
     exit: ?bool = null,
     protocols: ?[]const []const u8 = null,
+    num_ports: ?i64 = null,
+    num_proxies: ?i64 = null,
     last_seen: ?[]const u8 = null,
     last_usable: ?[]const u8 = null,
 };
