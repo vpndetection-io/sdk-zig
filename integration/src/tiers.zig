@@ -36,13 +36,13 @@ pub const Tier = enum {
     }
 
     /// What this rung promises against whichever observable rung sits below it.
-    /// The first paid tier serves strictly more than a free key; every paid
-    /// plan answers the same fields, so a higher paid tier only keeps what the
-    /// one under it serves, and a free key keeps what no key does.
+    /// A free key serves strictly more than no key, and the first paid tier
+    /// strictly more than a free key; every paid plan answers the same fields,
+    /// so a higher paid tier only keeps what the one under it serves.
     pub fn widens(self: Tier) bool {
         return switch (self) {
-            .unauth, .free, .scale, .max => false,
-            .starter => true,
+            .unauth, .scale, .max => false,
+            .free, .starter => true,
         };
     }
 
