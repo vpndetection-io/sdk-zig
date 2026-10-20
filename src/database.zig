@@ -335,6 +335,10 @@ pub const Database = struct {
     /// `unlicensed` a dataset published but never bought.
     standing: []const u8,
     versions: []const DatabaseVersion,
+    /// An Open database: free under CC BY-SA 4.0, so credit VPNDetection and
+    /// share what you build from it under the same license. Every organization
+    /// holds a `standard` license to it from the start.
+    open: bool = false,
 };
 
 /// Mirrors `components.schemas.DatabaseVersion`. One published version of a
@@ -363,6 +367,8 @@ pub const Download = struct {
     outcome: []const u8,
     bytes: ?i64 = null,
     created: []const u8,
+    /// Whether the dataset is an Open one, free under CC BY-SA 4.0.
+    open: bool = false,
 };
 
 pub const DatabaseMetadataColumn = struct {

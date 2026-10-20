@@ -558,7 +558,7 @@ test "the database list unwraps a family and its versions" {
     defer harness.deinit();
     try harness.stub.route("/api/v1/database/list", .ok(
         \\{"databases":[{"base":"vpn_ip_extended","name":"VPN IP Extended","summary":"vpn_ip rows","starts":"2026-01-01T00:00:00.000Z","expires":null,"renews_at":null,"notice_due_at":null,
-        \\ "license_type":"standard","in_term":true,"standing":"licensed",
+        \\ "license_type":"standard","in_term":true,"standing":"licensed","open":false,
         \\ "versions":[{"id":"vpn_ip_extended_v1","version":1,
         \\   "formats":[{"format":"mmdb","bytes":1234}],"sample_formats":["csvgz"]}]}]}
     ));
@@ -572,6 +572,7 @@ test "the database list unwraps a family and its versions" {
     const family = databases.value[0];
     try std.testing.expectEqualStrings("vpn_ip_extended", family.base);
     try std.testing.expectEqualStrings("licensed", family.standing);
+    try std.testing.expect(!family.open);
     try std.testing.expectEqual(1, family.versions.len);
     try std.testing.expectEqualStrings("vpn_ip_extended_v1", family.versions[0].id);
     try std.testing.expectEqual(1, family.versions[0].version);
