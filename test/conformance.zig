@@ -78,7 +78,7 @@ test "an IPv4-mapped address is the IPv4 address it carries" {
     }
 }
 
-test "a bogon is answered locally in the full max shape" {
+test "a bogon is answered locally in the widest shape" {
     const gpa = std.testing.allocator;
     const data = try corpus.load(gpa);
     defer data.deinit();
@@ -99,6 +99,8 @@ test "a bogon is answered locally in the full max shape" {
     for (data.value.bogonResponse.emptyObjects) |name| {
         try std.testing.expectEqual(corpus.Member.empty_object, corpus.member(result.value, name));
     }
+    try corpus.expectObject(data.value.bogonResponse.location, result.value.location.?);
+    try corpus.expectObject(data.value.bogonResponse.asn, result.value.asn.?);
     try std.testing.expectEqual(0, harness.stub.callCount());
 }
 
@@ -160,6 +162,12 @@ test "a lookup preserves absent versus false across every plan shape" {
         }
         if (case.expect.pubproxy) |expected| {
             try corpus.expectDetail(expected, result.value.pubproxy.?);
+        }
+        if (case.expect.location) |expected| {
+            try corpus.expectObject(expected, result.value.location.?);
+        }
+        if (case.expect.asn) |expected| {
+            try corpus.expectObject(expected, result.value.asn.?);
         }
     }
 }

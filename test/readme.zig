@@ -33,6 +33,8 @@ fn examples(gpa: std.mem.Allocator) !void {
     const hosting = result.value.is_hosting orelse false;
     _ = hosting;
 
+    std.debug.print("{s}\n", .{result.value.location.?.country});
+    std.debug.print("{s}\n", .{result.value.asn.?.name});
     std.debug.print("{s}\n", .{result.value.vpn.?.provider.?});
 
     var batch = try client.lookupBatch(&.{ "45.83.91.1", "8.8.8.8", "1.1.1.1" }, .{});

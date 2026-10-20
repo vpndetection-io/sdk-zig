@@ -42,6 +42,11 @@ pub const Answer = struct {
     dcproxy: ?ProxyDetail = null,
     mobproxy: ?ProxyDetail = null,
     pubproxy: ?PubproxyDetail = null,
+    /// Where the address is. Every keyed answer carries it, free and paid.
+    location: ?Location = null,
+    /// The AS announcing the address. Every keyed answer carries it, free and
+    /// paid.
+    asn: ?Asn = null,
 };
 
 /// Dates arrive as `YYYY-MM-DD` strings and stay strings: Zig has no date type
@@ -51,6 +56,8 @@ pub const VpnDetail = struct {
     provider: ?[]const u8 = null,
     last_seen: ?[]const u8 = null,
     confidence: ?[]const u8 = null,
+    /// Deprecated: no plan is answered with it since 2026-10-20, so it is
+    /// always null; read `confidence` instead. It goes in the next major.
     method: ?[]const u8 = null,
 };
 
@@ -88,6 +95,62 @@ pub const PubproxyDetail = struct {
     num_proxies: ?i64 = null,
     last_seen: ?[]const u8 = null,
     last_usable: ?[]const u8 = null,
+};
+
+/// Where the address is, to the country. Every member is present whenever the
+/// object is, an empty string where it is not known, so none has a default and
+/// an answer missing one fails to parse.
+pub const Location = struct {
+    /// The continent code, e.g. `EU`.
+    continent: []const u8,
+    continent_name: []const u8,
+    /// The ISO 3166-1 alpha-2 country code, e.g. `AT`.
+    country: []const u8,
+    country_name: []const u8,
+    /// The IANA time zone, e.g. `Europe/Vienna`.
+    timezone: []const u8,
+    /// The ISO 4217 code of the country's currency, e.g. `EUR`.
+    currency_code: []const u8,
+    currency_name: []const u8,
+    currency_symbol: []const u8,
+    flag_emoji: []const u8,
+    /// The flag's code points, e.g. `U+1F1E6 U+1F1F9`.
+    flag_unicode: []const u8,
+
+    /// Every member empty, as the API answers an address in no country.
+    pub const empty: Location = .{
+        .continent = "",
+        .continent_name = "",
+        .country = "",
+        .country_name = "",
+        .timezone = "",
+        .currency_code = "",
+        .currency_name = "",
+        .currency_symbol = "",
+        .flag_emoji = "",
+        .flag_unicode = "",
+    };
+};
+
+/// The autonomous system announcing the address. `asn` is 0 and the rest empty
+/// where no announcement covers it. Every member is present whenever the object
+/// is.
+pub const Asn = struct {
+    /// The AS number, or 0.
+    asn: i64,
+    /// The organization that operates the AS.
+    name: []const u8,
+    /// The AS operator's own registrable domain.
+    domain: []const u8,
+    /// `isp`, `hosting`, `education`, `government` or `business`.
+    type: []const u8,
+    /// The announced prefix covering the address, the most specific when
+    /// several do.
+    prefix: []const u8,
+
+    /// AS 0 and every other member empty, as the API answers an address no
+    /// announcement covers.
+    pub const empty: Asn = .{ .asn = 0, .name = "", .domain = "", .type = "", .prefix = "" };
 };
 
 /// One answer, and the memory behind it.
@@ -130,7 +193,8 @@ pub fn parseServed(gpa: Allocator, body: []const u8) ParseError!Lookup {
 }
 
 /// The answer a bogon gets, in the full shape the API serves at its widest plan:
-/// every flag present and false, every detail object present and empty.
+/// every flag present and false, every detail object present and empty, and a
+/// location and AS of empty strings and AS 0.
 ///
 /// This is deliberately the WIDEST shape regardless of your plan, so a caller
 /// must not infer which fields their plan includes from a bogon answer.
@@ -159,6 +223,8 @@ pub fn bogonLookup(gpa: Allocator, ip: []const u8) Allocator.Error!Lookup {
         .dcproxy = .{},
         .mobproxy = .{},
         .pubproxy = .{},
+        .location = .empty,
+        .asn = .empty,
     };
     return lookup;
 }

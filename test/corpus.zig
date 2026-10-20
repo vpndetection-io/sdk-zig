@@ -51,6 +51,8 @@ pub const BogonResponse = struct {
     why: []const u8,
     flagsFalse: []const []const u8,
     emptyObjects: []const []const u8,
+    location: std.json.Value,
+    asn: std.json.Value,
 };
 
 pub const LookupCase = struct {
@@ -71,6 +73,8 @@ pub const LookupExpect = struct {
     hosting: ?std.json.Value = null,
     dcproxy: ?std.json.Value = null,
     pubproxy: ?std.json.Value = null,
+    location: ?std.json.Value = null,
+    asn: ?std.json.Value = null,
 };
 
 pub const ErrorCase = struct {
@@ -304,7 +308,12 @@ fn stateOf(comptime T: type, value: T) Member {
 
 fn allNull(value: anytype) bool {
     inline for (comptime std.meta.fieldNames(@TypeOf(value))) |field_name| {
-        if (@field(value, field_name) != null) {
+        const field = @field(value, field_name);
+        // A required member, as every one of the location's and the AS's is,
+        // is always there.
+        if (comptime @typeInfo(@TypeOf(field)) != .optional) {
+            return false;
+        } else if (field != null) {
             return false;
         }
     }
@@ -341,4 +350,25 @@ pub fn expectDetail(expected: std.json.Value, actual: anytype) !void {
         }
     }
     try std.testing.expectEqual(want.count(), matched);
+}
+
+/// Compares an object whose every member is required, the location and the AS,
+/// against the fixture's expectation, which must name every member.
+pub fn expectObject(expected: std.json.Value, actual: anytype) !void {
+    try std.testing.expect(expected == .object);
+    const want = expected.object;
+    const names = comptime std.meta.fieldNames(@TypeOf(actual));
+    inline for (names) |field_name| {
+        const value = want.get(field_name) orelse {
+            std.debug.print("{s} is not in the expected object\n", .{field_name});
+            return error.TestExpectedEqual;
+        };
+        const got = @field(actual, field_name);
+        if (comptime @FieldType(@TypeOf(actual), field_name) == []const u8) {
+            try std.testing.expectEqualStrings(value.string, got);
+        } else {
+            try std.testing.expectEqual(value.integer, got);
+        }
+    }
+    try std.testing.expectEqual(want.count(), names.len);
 }

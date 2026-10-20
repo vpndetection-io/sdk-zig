@@ -24,7 +24,7 @@ Requires Zig **0.16.0** or **0.17.0**. Zig is pre-1.0 and its standard library s
 
 ## Usage
 
-**No API key needed to start.** The free tier answers `ip` and `is_vpn`, and allows 1000 requests per day per source address.
+**No API key needed to start.** Without a key, a lookup answers `ip` and `is_vpn`, up to 1000 a day per source address.
 
 ```zig
 const std = @import("std");
@@ -59,7 +59,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### With an API key
 
-An API key raises your quota, and raises your features on a paid plan. Create one in the [console](https://app.vpndetection.io), then pass it in:
+A free key adds Tor and relay detection, where the address is and the AS that announces it. Every paid plan answers every field, the same on each, and the plans differ only in how many lookups they include. Create a key in the [console](https://app.vpndetection.io), then pass it in:
 
 ```zig
 var client = try vpndetection.Client.init(gpa, io, .{ .api_key = key });
@@ -69,8 +69,10 @@ const result = try client.lookup("45.83.91.1");
 defer result.deinit();
 
 std.debug.print("{}\n", .{result.value.is_vpn});                  // true
-std.debug.print("{s}\n", .{result.value.vpn.?.provider.?});       // nordvpn
-std.debug.print("{}\n", .{result.value.is_hosting orelse false}); // true
+std.debug.print("{s}\n", .{result.value.location.?.country});     // the ISO 3166 country code
+std.debug.print("{s}\n", .{result.value.asn.?.name});             // who runs the announcing network
+std.debug.print("{s}\n", .{result.value.vpn.?.provider.?});       // nordvpn, on a paid plan
+std.debug.print("{}\n", .{result.value.is_hosting orelse false}); // true, on a paid plan
 ```
 
 The blanks around a key, a file's trailing newline among them, are dropped, and a key of blanks alone is no key at all. A key holding any other control character is refused: every call that would send it fails with `BadRequest` before anything leaves the client.
@@ -281,7 +283,7 @@ Check that `state` came back as you sent it before you exchange `code`, which wo
 
 ### Absent is not false
 
-Every field beyond `ip` and `is_vpn` is optional, because your plan decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
+Without a key only `ip` and `is_vpn` come back, and a free key adds Tor, relay, `location` and `asn`. Every field beyond `ip` and `is_vpn` is optional, because your plan decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
 
 ```zig
 const hosting = result.value.is_hosting orelse false; // when you only want the flag
