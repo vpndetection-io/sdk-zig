@@ -2,6 +2,13 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.9.0 - 2026-10-20
+
+### Features
+
+- Read open on databases and downloads ([`cd4377e`](https://github.com/vpndetection-io/sdk-zig/commit/cd4377e02a52d734dbff80051b3caae7040c8447))
+- Add location and asn to lookup results, a bogon's included ([`0a9ca38`](https://github.com/vpndetection-io/sdk-zig/commit/0a9ca3886f465a1e96e1d5e3e32a5726b291f486))
+
 ## 4.8.0 - 2026-10-19
 
 ### Features
