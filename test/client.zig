@@ -1210,3 +1210,48 @@ test "a batch entry with a member of the wrong type or a malformed date fails th
     };
     try std.testing.expect(batch.get("9.9.9.9").? == .ok);
 }
+
+// A proxy's or a gateway's own refusal is classified by its status alone, and
+// sent once, whatever its body is and whatever it is labeled as.
+test "a 4xx whose body is not the API's is classified by its status and sent once" {
+    const gpa = std.testing.allocator;
+    const Refusal = struct { status: u16, body: []const u8, want: anyerror };
+    const refusals = [_]Refusal{
+        .{ .status = 401, .body = "<html><body>401 Authorization Required</body></html>", .want = error.Unauthorized },
+        .{ .status = 403, .body = "", .want = error.Forbidden },
+        .{ .status = 429, .body = "<html><body>Too Many Requests</body></html>", .want = error.QuotaExceeded },
+        .{ .status = 400, .body = "<html><body>Bad Request</body></html>", .want = error.BadRequest },
+    };
+    const labels = [_][]const u8{ "text/html", "application/json" };
+    for (refusals) |refusal| for (labels) |label| for (paths_of_every_call) |path| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        const headers = try harness.stub.arena.allocator().dupe(Route.Header, &.{.{ .name = "Content-Type", .value = label }});
+        try harness.stub.route(path, .{ .status = refusal.status, .body = refusal.body, .headers = headers, .verbatim = true });
+        var client = try harness.client(.{ .retries = 2, .cache = null });
+        defer client.deinit();
+        var diag: vpndetection.Diagnostics = .{};
+        const failed: ?anyerror = if (std.mem.eql(u8, path, "/batch")) blk: {
+            var batch = try client.lookupBatch(&.{"1.1.1.1"}, .{});
+            defer batch.deinit();
+            break :blk switch (batch.get("1.1.1.1").?) {
+                .ok => null,
+                .failed => |failure| failed: {
+                    diag = failure.diagnostics;
+                    break :failed failure.err;
+                },
+            };
+        } else callFor(&client, path, &diag);
+        std.testing.expectEqual(@as(?anyerror, refusal.want), failed) catch |err| {
+            std.debug.print("{s} answering {d} as {s}\n", .{ path, refusal.status, label });
+            return err;
+        };
+        try std.testing.expectEqual(1, harness.stub.callCount());
+        try std.testing.expectEqual(@as(?u16, refusal.status), diag.status);
+    };
+}
+
+const paths_of_every_call = [_][]const u8{
+    "/1.1.1.1",              "/myip",                     "/api/v1/entitlement",       "/batch",
+    "/api/v1/database/list", "/api/v1/database/metadata", "/api/v1/database/checksum", "/api/v1/database/downloads",
+};
