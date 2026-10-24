@@ -2,6 +2,16 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.10.0 - 2026-10-24
+
+### Features
+
+- Add oauth().register, for RFC 7591 dynamic client registration ([`3ae80da`](https://github.com/vpndetection-io/sdk-zig/commit/3ae80da3f1478413520d8250543c1f46791fc179))
+
+### Fixes
+
+- Refuse a numeric string, a malformed date or a missing required member ([`28d8d91`](https://github.com/vpndetection-io/sdk-zig/commit/28d8d917de149f3f2de28623b1831342a918cfec))
+
 ## 4.9.0 - 2026-10-20
 
 ### Features
