@@ -20,7 +20,9 @@ const every_required_member =
     \\"authorization_endpoint":"https://api.example.test/oauth/authorize",
     \\"token_endpoint":"https://api.example.test/oauth/token","device_code":"mo_dc_x",
     \\"user_code":"BCDF-GHJK","verification_uri":"https://app.example.test/device",
-    \\"expires_in":900,"interval":1,"access_token":"mo_at_x","token_type":"Bearer"}
+    \\"expires_in":900,"interval":1,"access_token":"mo_at_x","token_type":"Bearer",
+    \\"client_id":"dcr_x","client_id_issued_at":1792304178,"client_name":"Example CLI",
+    \\"redirect_uris":["http://127.0.0.1/cb"],"token_endpoint_auth_method":"none"}
 ;
 
 const oauth_paths = [_][]const u8{
@@ -28,6 +30,7 @@ const oauth_paths = [_][]const u8{
     "/oauth/device_authorization",
     "/oauth/token",
     "/oauth/revoke",
+    "/oauth/register",
 };
 
 test "no OAuth request carries the API key" {
@@ -53,6 +56,7 @@ test "no OAuth request carries the API key" {
     try oauth.revoke(client_id, "mo_rt_x", .{});
     (try oauth.pollDeviceToken(client_id, device.value, .{})).deinit();
     (try oauth.exchangeAuthorizationCode(client_id, "mo_ac_x", "v", "http://127.0.0.1:8765/cb", .{})).deinit();
+    (try oauth.register(&.{"http://127.0.0.1:8765/cb"}, .{ .client_name = "Example CLI" })).deinit();
     const url = try oauth.authorizationUrl(client_id, "http://127.0.0.1:8765/cb", "c", .{
         .scope = "apikeys.use",
         .state = "s",
@@ -68,7 +72,7 @@ test "no OAuth request carries the API key" {
     }
 
     const calls = harness.stub.seen();
-    try std.testing.expectEqual(7, calls.len);
+    try std.testing.expectEqual(8, calls.len);
     for (calls) |call| {
         for (credential.forbiddenHeaders) |name| {
             if (call.header(name)) |value| {
@@ -668,6 +672,122 @@ fn expectValue(comptime T: type, got: T, want: std.json.Value) !void {
 
 // RFC 7636's vector, then generated pairs: 43 characters of base64url, each its
 // own challenge, never the same verifier twice.
+test "register posts exactly its JSON body, and refuses an empty URI unsent" {
+    const gpa = std.testing.allocator;
+    const data = try corpus.load(gpa);
+    defer data.deinit();
+    const register = data.value.oauth.register;
+
+    for (register.bodies.cases) |case| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try routeEveryPath(harness, .{ .status = 201, .body = every_required_member });
+        var client = try harness.client(.{});
+        defer client.deinit();
+        (try client.oauth().register(case.args.redirectUris, .{ .client_name = case.args.clientName })).deinit();
+
+        const calls = harness.stub.seen();
+        try std.testing.expectEqual(1, calls.len);
+        try std.testing.expectEqualStrings(register.endpoint.path, calls[0].path);
+        const content_type = calls[0].header("content-type") orelse "";
+        try std.testing.expect(std.mem.startsWith(u8, content_type, register.contentType));
+        const sent = try std.json.parseFromSlice(std.json.Value, gpa, calls[0].body, .{});
+        defer sent.deinit();
+        const want = try corpus.json(harness.stub.arena.allocator(), case.body);
+        const got = try corpus.json(harness.stub.arena.allocator(), sent.value);
+        std.testing.expectEqualStrings(want, got) catch |err| {
+            std.debug.print("{s}: sent {s}\n", .{ case.name, calls[0].body });
+            return err;
+        };
+    }
+    const local = [_][]const []const u8{ &.{"http://127.0.0.1/cb\xff"}, &.{} };
+    var refusals: std.ArrayList([]const []const u8) = .empty;
+    defer refusals.deinit(gpa);
+    for (register.refusals.cases) |case| try refusals.append(gpa, case.args.redirectUris);
+    try refusals.appendSlice(gpa, &local);
+    for (refusals.items) |uris| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try routeEveryPath(harness, .{ .status = 201, .body = every_required_member });
+        var client = try harness.client(.{});
+        defer client.deinit();
+        try std.testing.expectError(error.BadRequest, client.oauth().register(uris, .{}));
+        try std.testing.expectEqual(0, harness.stub.callCount());
+    }
+}
+
+test "register decodes on presence, and anything unreadable is an ordinary error" {
+    const gpa = std.testing.allocator;
+    const data = try corpus.load(gpa);
+    defer data.deinit();
+    const register = data.value.oauth.register;
+    const uris = &[_][]const u8{"http://127.0.0.1/cb"};
+
+    for (register.responses.cases) |case| {
+        const harness = try servingCase(gpa, case.status, case.body);
+        defer harness.deinit();
+        var client = try harness.client(.{ .retries = 0 });
+        defer client.deinit();
+        const got = try client.oauth().register(uris, .{});
+        defer got.deinit();
+        try expectMembers(case.name, got.value, case.expect.present, case.expect.absent);
+    }
+    for (register.unreadable.cases) |served| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try routeEveryPath(harness, .{ .status = served.status, .body = try served.text(harness.stub.arena.allocator()) });
+        var client = try harness.client(.{ .retries = 0 });
+        defer client.deinit();
+        var diagnostics: vpndetection.Diagnostics = .{};
+        if (client.oauth().register(uris, .{ .diagnostics = &diagnostics })) |got| {
+            got.deinit();
+            std.debug.print("{s}: decoded\n", .{served.name});
+            return error.TestUnexpectedResult;
+        } else |err| {
+            std.testing.expectEqual(error.ServerError, err) catch |e| {
+                std.debug.print("{s}: {s}\n", .{ served.name, @errorName(err) });
+                return e;
+            };
+            try std.testing.expectEqual(served.status, diagnostics.status.?);
+        }
+        try std.testing.expectEqual(1, harness.stub.callCount());
+    }
+    for (register.errors) |case| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        const served = case.served();
+        try routeEveryPath(harness, .{ .status = served.status, .body = try served.text(harness.stub.arena.allocator()) });
+        var client = try harness.client(.{ .retries = 0 });
+        defer client.deinit();
+        var diagnostics: vpndetection.Diagnostics = .{};
+        if (client.oauth().register(uris, .{ .diagnostics = &diagnostics })) |got| {
+            got.deinit();
+            return error.TestUnexpectedResult;
+        } else |err| {
+            try expectFailure(case.name, err, &diagnostics, case.expect, case.expect.type.?);
+        }
+    }
+    for (register.retries) |case| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try harness.stub.sequence(register.endpoint.path, try routesFor(harness, case.responses));
+        var client = try harness.client(.{});
+        defer client.deinit();
+        var diagnostics: vpndetection.Diagnostics = .{};
+        const outcome = client.oauth().register(case.args.redirectUris, .{ .diagnostics = &diagnostics });
+        std.testing.expectEqual(case.expect.requests.?, harness.stub.callCount()) catch |err| {
+            std.debug.print("{s}: requests\n", .{case.name});
+            return err;
+        };
+        if (outcome) |got| {
+            got.deinit();
+            try std.testing.expectEqualStrings("ok", case.expect.outcome.?);
+        } else |err| {
+            try expectFailure(case.name, err, &diagnostics, case.expect, case.expect.outcome.?);
+        }
+    }
+}
+
 test "a PKCE pair matches the RFC vector and is never reused" {
     const gpa = std.testing.allocator;
     const data = try corpus.load(gpa);

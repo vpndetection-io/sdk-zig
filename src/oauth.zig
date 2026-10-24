@@ -64,6 +64,16 @@ pub const AuthorizationUrlOptions = struct {
     resource: ?[]const u8 = null,
 };
 
+/// What `register` asks for beyond the redirect URIs. A name left null, or
+/// empty, is left out of the request.
+pub const RegisterOptions = struct {
+    /// Shown to the person as the client's own claim, marked unverified, beside
+    /// where its redirect goes.
+    client_name: ?[]const u8 = null,
+    timeout: ?Io.Duration = null,
+    diagnostics: ?*Diagnostics = null,
+};
+
 /// One sign-in's PKCE pair, from `createPkce`: `challenge` goes into the
 /// authorization URL, `verifier` only to the exchange. Fixed-size, so there is
 /// nothing to free.
@@ -201,6 +211,54 @@ pub const OauthApi = struct {
             .diagnostics = diag,
         });
         self.client.gpa.free(body);
+    }
+
+    /// Registers a client for the authorization code flow, for an app that
+    /// cannot serve a Client ID Metadata Document, and answers its `client_id`.
+    ///
+    /// Each redirect URI must be https on a public host name, or http on a
+    /// loopback address, which then matches on any port; the server refuses any
+    /// other as `error.OauthRejected` with code `invalid_redirect_uri`. Nothing
+    /// is kept until a person approves the client, so registering again costs
+    /// nothing, and this is retried like any read. No URI at all, or one that is
+    /// empty or not UTF-8, is `error.BadRequest` before anything is sent.
+    pub fn register(
+        self: OauthApi,
+        redirect_uris: []const []const u8,
+        options: RegisterOptions,
+    ) OauthCallError!Parsed(ClientRegistration) {
+        var scratch: Diagnostics = .{};
+        const diag = options.diagnostics orelse &scratch;
+        if (redirect_uris.len == 0) {
+            diag.setMessage("redirect_uris must list at least one URI");
+            return error.BadRequest;
+        }
+        for (redirect_uris) |uri| {
+            if (uri.len == 0 or !std.unicode.utf8ValidateSlice(uri)) {
+                diag.setMessage("a redirect URI is empty or not UTF-8");
+                return error.BadRequest;
+            }
+        }
+        const name = options.client_name orelse "";
+        if (!std.unicode.utf8ValidateSlice(name)) {
+            diag.setMessage("client_name is not UTF-8");
+            return error.BadRequest;
+        }
+        const gpa = self.client.gpa;
+        const body = try std.json.Stringify.valueAlloc(gpa, Registration{
+            .redirect_uris = redirect_uris,
+            .client_name = if (name.len > 0) name else null,
+        }, .{ .emit_null_optional_fields = false });
+        defer gpa.free(body);
+        return self.fetch(ClientRegistration, .{
+            .method = .POST,
+            .path = "/oauth/register",
+            .form = body,
+            .content_type = "application/json",
+            .retries = self.client.retries,
+            .timeout = options.timeout orelse self.client.timeout,
+            .diagnostics = diag,
+        });
     }
 
     /// The URL to open in the person's browser for the authorization code flow,
@@ -526,6 +584,31 @@ pub const TokenResponse = struct {
     /// one whose secret cannot be read back, which is the case for a key created
     /// before keys could be shown again in the console.
     apikey: ?[]const u8 = null,
+};
+
+/// A registered client, from `register`: public and with no secret, it proves
+/// each sign-in with PKCE.
+pub const ClientRegistration = struct {
+    /// The client ID for `authorizationUrl` and `exchangeAuthorizationCode`.
+    client_id: []const u8,
+    /// When it was issued, in Unix seconds.
+    client_id_issued_at: i64,
+    /// The name the person will see, a placeholder when none was given or none
+    /// can be shown.
+    client_name: []const u8,
+    redirect_uris: []const []const u8,
+    grant_types: ?[]const []const u8 = null,
+    response_types: ?[]const []const u8 = null,
+    /// Always `none`.
+    token_endpoint_auth_method: []const u8,
+    /// The most this client may be granted.
+    scope: ?[]const u8 = null,
+};
+
+/// `register`'s body: the redirect URIs in the order given, then the name.
+const Registration = struct {
+    redirect_uris: []const []const u8,
+    client_name: ?[]const u8 = null,
 };
 
 /// `TokenResponse` as the wire spells it.

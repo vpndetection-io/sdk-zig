@@ -280,6 +280,8 @@ pub const OauthRequest = struct {
     method: std.http.Method = .GET,
     path: []const u8,
     form: []const u8 = "",
+    /// What a POST's `form` is: a form, or `register`'s JSON.
+    content_type: []const u8 = "application/x-www-form-urlencoded",
     retries: u32,
     timeout: Io.Duration,
     diagnostics: *Diagnostics,
@@ -399,7 +401,7 @@ pub const Transport = struct {
                 .authorization = .omit,
                 .user_agent = .{ .override = user_agent },
                 .content_type = if (oauth.method == .POST)
-                    .{ .override = "application/x-www-form-urlencoded" }
+                    .{ .override = oauth.content_type }
                 else
                     .default,
             },

@@ -154,6 +154,21 @@ pub const Oauth = struct {
         forms: []const FormCase,
         retries: []const RetryCase,
     },
+    register: struct {
+        endpoint: Endpoint,
+        contentType: []const u8,
+        bodies: struct { cases: []const struct { name: []const u8, args: RegisterArgs, body: std.json.Value } },
+        refusals: struct { cases: []const struct { name: []const u8, args: RegisterArgs } },
+        responses: struct { cases: []const ResponseCase },
+        unreadable: struct { cases: []const Served },
+        retries: []const struct { name: []const u8, args: RegisterArgs, responses: []const Served, expect: OauthExpect },
+        errors: []const OauthErrorCase,
+    },
+};
+
+pub const RegisterArgs = struct {
+    redirectUris: []const []const u8,
+    clientName: ?[]const u8 = null,
 };
 
 pub const AuthorizationUrlCase = struct {

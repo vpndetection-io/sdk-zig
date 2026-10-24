@@ -96,6 +96,7 @@ fn examples(gpa: std.mem.Allocator) !void {
 
     try signIn(gpa, &threaded);
     try signInByCode(gpa, &threaded, "code");
+    try registerClient(gpa, &threaded);
 }
 
 fn signIn(gpa: std.mem.Allocator, threaded: *std.Io.Threaded) !void {
@@ -116,6 +117,13 @@ fn signIn(gpa: std.mem.Allocator, threaded: *std.Io.Threaded) !void {
         error.OauthAccessDenied, error.OauthExpiredToken => {},
         else => return err,
     };
+}
+
+fn registerClient(gpa: std.mem.Allocator, threaded: *std.Io.Threaded) !void {
+    var client = try vpndetection.Client.init(gpa, threaded.io(), .{});
+    defer client.deinit();
+    const registration = try client.oauth().register(&.{"http://127.0.0.1:8765/callback"}, .{ .client_name = "Your App" });
+    defer registration.deinit();
 }
 
 fn signInByCode(gpa: std.mem.Allocator, threaded: *std.Io.Threaded, code: []const u8) !void {

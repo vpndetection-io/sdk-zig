@@ -281,6 +281,19 @@ defer token.deinit();
 
 Check that `state` came back as you sent it before you exchange `code`, which works once. The client ID can also be the https URL of a client metadata document your app serves, and such an app is never handed a key, so `token.value.apikey` stays `null`.
 
+### Register a client
+
+An app with no client ID, and no client metadata document to use as one, registers itself, then signs in with the `client_id` it gets back as the client ID for `authorizationUrl` and `exchangeAuthorizationCode`:
+
+```zig
+var client = try vpndetection.Client.init(gpa, threaded.io(), .{});
+defer client.deinit();
+const registration = try client.oauth().register(&.{"http://127.0.0.1:8765/callback"}, .{ .client_name = "Your App" });
+defer registration.deinit();
+```
+
+Each redirect URI must be https on a public host name, or http on a loopback address, which then matches any port. Nothing is kept until a person approves the client, so an app with no client ID saved can simply register again.
+
 ### Absent is not false
 
 Without a key only `ip` and `is_vpn` come back, and a free key adds Tor, relay, `location` and `asn`. Every field beyond `ip` and `is_vpn` is optional, because your plan decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
