@@ -96,4 +96,5 @@ test {
     _ = @import("http.zig");
     _ = @import("lookup.zig");
     _ = @import("oauth.zig");
+    _ = @import("strict.zig");
 }

@@ -1027,3 +1027,186 @@ test "myEntitlement surfaces an unauthorized key" {
 
     try std.testing.expectError(error.Unauthorized, client.myEntitlement());
 }
+
+// A member of the wrong type at any depth, a numeric string where a number is
+// due among them, a date the spec's format does not name, and a member the spec
+// requires that is missing: each is an answer the call cannot read, so it is
+// retried like a 5xx and carries its status, as a body that is not JSON is.
+const lookup_ok =
+    \\{"ip":"1.1.1.1","is_vpn":true,"is_dcproxy":true,"is_pubproxy":true,
+    \\"vpn":{"provider":"p","last_seen":"2026-10-20","confidence":"high"},
+    \\"dcproxy":{"provider":"d","first_seen":"2026-10-01","last_seen":"2026-10-20","hits":3,"hits_days_pct":10,"providers_num":1},
+    \\"pubproxy":{"entry":true,"exit":false,"protocols":["http"],"num_ports":2,"num_proxies":0,"last_seen":"2026-10-20","last_usable":""},
+    \\"asn":{"asn":5,"name":"n","domain":"d","type":"t","prefix":"p"}}
+;
+const entitlement_ok =
+    \\{"org_id":"o","apikey":{"id":"k","expires":null,"allowed_cidrs":[]},"plan":{"key":"max","tier":"max"},
+    \\"usage":{"requests":1,"quota":10,"hard_limit":null,"window_start":"2026-10-01T00:00:00Z","window_end":"2026-11-01T00:00:00.5+02:00"}}
+;
+const list_ok =
+    \\{"databases":[{"base":"vpn_ip","name":"VPN IP","summary":"s","license_type":"standard","starts":"2026-01-01T00:00:00Z",
+    \\"expires":null,"renews_at":null,"notice_due_at":null,"in_term":true,"standing":"licensed","open":false,
+    \\"versions":[{"id":"vpn_ip_v1","version":1,"formats":[{"format":"mmdb","bytes":760}]}]}]}
+;
+const metadata_ok =
+    \\{"id":"vpn_ip_v1","update_freq":"daily","updated":"2026-10-20","entries":5,"schema":{"mmdb":[{"name":"ip","type":"string"}]},
+    \\"sample":{"csv":[{"ip":"1.1.1.1"}]},"size":{"mmdb":760},"sample_entries":1,"sample_size":{"csv":10}}
+;
+const checksum_ok =
+    \\{"id":"vpn_ip_v1","format":"mmdb","checksums":{"md5":"a","sha1":"b","sha256":"c","sha512":"d"}}
+;
+const downloads_ok =
+    \\{"downloads":[{"dataset_id":"vpn_ip_v1","format":"mmdb","outcome":"ok","sample":false,"open":false,"bytes":760,
+    \\"http_status":200,"apikey_id":null,"client_ip":null,"user_agent":null,"created":"2026-10-20T10:00:00Z"}]}
+;
+
+const Case = struct { path: []const u8, body: []const u8, from: []const u8 = "", to: []const u8 = "" };
+
+// Each case is a well-formed answer with one member replaced, so the answer
+// itself is what the call must refuse.
+const wrong_answers = [_]Case{
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"hits\":3", .to = "\"hits\":\"3\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"num_ports\":2", .to = "\"num_ports\":\"2\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"asn\":5", .to = "\"asn\":\"5\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"is_vpn\":true", .to = "\"is_vpn\":\"false\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "[\"http\"]", .to = "[null]" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"last_seen\":\"2026-10-20\",\"confidence\"", .to = "\"last_seen\":\"x\",\"confidence\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"last_seen\":\"2026-10-20\",\"confidence\"", .to = "\"last_seen\":\"tomorrow\",\"confidence\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"last_seen\":\"2026-10-20\",\"confidence\"", .to = "\"last_seen\":\"monday\",\"confidence\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"first_seen\":\"2026-10-01\"", .to = "\"first_seen\":\"2026-02-30\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"first_seen\":\"2026-10-01\"", .to = "\"first_seen\":\"2026-10-1\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"last_seen\":\"2026-10-20\",\"last_usable\"", .to = "\"last_seen\":\"2026-10-20T10:00:00Z\",\"last_usable\"" },
+    .{ .path = "/myip", .body = lookup_ok, .from = "\"hits\":3", .to = "\"hits\":\"3\"" },
+    .{ .path = "/myip", .body = lookup_ok, .from = "\"last_seen\":\"2026-10-20\",\"confidence\"", .to = "\"last_seen\":\"x\",\"confidence\"" },
+    .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"requests\":1", .to = "\"requests\":\"1\"" },
+    .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"window_start\":\"2026-10-01T00:00:00Z\"", .to = "\"window_start\":\"x\"" },
+    .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"window_start\":\"2026-10-01T00:00:00Z\"", .to = "\"window_start\":\"2026-10-01T24:00:00Z\"" },
+    .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"window_start\":\"2026-10-01T00:00:00Z\"", .to = "\"window_start\":\"2026-10-01T10:00:00\"" },
+    .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"window_start\":\"2026-10-01T00:00:00Z\"", .to = "\"window_start\":\"2026-02-30T00:00:00Z\"" },
+    .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"window_start\":\"2026-10-01T00:00:00Z\"", .to = "\"window_start\":\"2026-10-01\"" },
+    .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"expires\":null", .to = "\"expires\":\"monday\"" },
+    .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"version\":1", .to = "\"version\":\"1\"" },
+    .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"version\":1", .to = "\"version\":\"x\"" },
+    .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"bytes\":760", .to = "\"bytes\":\"760\"" },
+    .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"starts\":\"2026-01-01T00:00:00Z\"", .to = "\"starts\":\"tomorrow\"" },
+    .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"starts\":\"2026-01-01T00:00:00Z\"", .to = "\"starts\":\"2026-01-01 00:00:00Z\"" },
+    .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"open\":false,", .to = "" },
+    .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"summary\":\"s\",", .to = "" },
+    .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"renews_at\":null,", .to = "" },
+    .{ .path = "/api/v1/database/metadata", .body = metadata_ok, .from = "\"entries\":5", .to = "\"entries\":\"5\"" },
+    .{ .path = "/api/v1/database/metadata", .body = metadata_ok, .from = "\"mmdb\":760", .to = "\"mmdb\":\"760\"" },
+    .{ .path = "/api/v1/database/metadata", .body = metadata_ok, .from = "\"updated\":\"2026-10-20\"", .to = "\"updated\":\"x\"" },
+    .{ .path = "/api/v1/database/metadata", .body = metadata_ok, .from = "\"updated\":\"2026-10-20\"", .to = "\"updated\":\"2026-02-30\"" },
+    .{ .path = "/api/v1/database/metadata", .body = metadata_ok, .from = "\"updated\":\"2026-10-20\"", .to = "\"updated\":\"2026-10-20T10:00:00Z\"" },
+    .{ .path = "/api/v1/database/metadata", .body = metadata_ok, .from = "[{\"ip\":\"1.1.1.1\"}]", .to = "[null]" },
+    .{ .path = "/api/v1/database/metadata", .body = metadata_ok, .from = "\"schema\":{\"mmdb\":[{\"name\":\"ip\",\"type\":\"string\"}]},", .to = "" },
+    .{ .path = "/api/v1/database/checksum", .body = checksum_ok, .from = "\"id\":\"vpn_ip_v1\",", .to = "" },
+    .{ .path = "/api/v1/database/checksum", .body = checksum_ok, .from = "\"md5\":\"a\"", .to = "\"md5\":7" },
+    .{ .path = "/api/v1/database/downloads", .body = downloads_ok, .from = "\"bytes\":760", .to = "\"bytes\":\"760\"" },
+    .{ .path = "/api/v1/database/downloads", .body = downloads_ok, .from = "\"created\":\"2026-10-20T10:00:00Z\"", .to = "\"created\":\"x\"" },
+    .{ .path = "/api/v1/database/downloads", .body = downloads_ok, .from = "\"created\":\"2026-10-20T10:00:00Z\"", .to = "\"created\":\"2026-10-20T10:00:00+0500\"" },
+    .{ .path = "/api/v1/database/downloads", .body = downloads_ok, .from = "\"bytes\":760,", .to = "" },
+};
+
+fn callFor(client: *vpndetection.Client, path: []const u8, diag: *vpndetection.Diagnostics) ?anyerror {
+    const database = client.database();
+    if (std.mem.eql(u8, path, "/1.1.1.1")) {
+        const answer = client.lookupWith("1.1.1.1", .{ .diagnostics = diag }) catch |err| return err;
+        answer.deinit();
+    } else if (std.mem.eql(u8, path, "/myip")) {
+        const answer = client.myIpWith(.{ .diagnostics = diag }) catch |err| return err;
+        answer.deinit();
+    } else if (std.mem.eql(u8, path, "/api/v1/entitlement")) {
+        const answer = client.myEntitlementWith(.{ .diagnostics = diag }) catch |err| return err;
+        answer.deinit();
+    } else if (std.mem.eql(u8, path, "/api/v1/database/list")) {
+        const answer = database.list(.{ .diagnostics = diag }) catch |err| return err;
+        answer.deinit();
+    } else if (std.mem.eql(u8, path, "/api/v1/database/metadata")) {
+        const answer = database.metadata("vpn_ip", .{ .diagnostics = diag }) catch |err| return err;
+        answer.deinit();
+    } else if (std.mem.eql(u8, path, "/api/v1/database/checksum")) {
+        const answer = database.checksums("vpn_ip_v1", .mmdb, .{ .diagnostics = diag }) catch |err| return err;
+        answer.deinit();
+    } else if (std.mem.eql(u8, path, "/api/v1/database/downloads")) {
+        const answer = database.downloads(null, .{ .diagnostics = diag }) catch |err| return err;
+        answer.deinit();
+    } else unreachable;
+    return null;
+}
+
+test "an answer with a member of the wrong type, a malformed date or a required member missing is retried" {
+    const gpa = std.testing.allocator;
+    // Every well-formed answer above reads, so each case below fails on its
+    // one change alone.
+    {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        for ([_]Case{
+            .{ .path = "/1.1.1.1", .body = lookup_ok },                      .{ .path = "/myip", .body = lookup_ok },
+            .{ .path = "/api/v1/entitlement", .body = entitlement_ok },      .{ .path = "/api/v1/database/list", .body = list_ok },
+            .{ .path = "/api/v1/database/metadata", .body = metadata_ok },   .{ .path = "/api/v1/database/checksum", .body = checksum_ok },
+            .{ .path = "/api/v1/database/downloads", .body = downloads_ok },
+        }) |case| try harness.stub.route(case.path, .{ .body = case.body });
+        var client = try harness.client(.{ .retries = 0, .cache = null });
+        defer client.deinit();
+        for ([_][]const u8{ "/1.1.1.1", "/myip", "/api/v1/entitlement", "/api/v1/database/list", "/api/v1/database/metadata", "/api/v1/database/checksum", "/api/v1/database/downloads" }) |path| {
+            var diag: vpndetection.Diagnostics = .{};
+            if (callFor(&client, path, &diag)) |err| {
+                std.debug.print("{s} refused its well-formed answer: {s} {s}\n", .{ path, @errorName(err), diag.message() });
+                return err;
+            }
+        }
+    }
+    var failures: usize = 0;
+    for (wrong_answers) |case| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        const body = try std.mem.replaceOwned(u8, harness.stub.arena.allocator(), case.body, case.from, case.to);
+        std.debug.assert(!std.mem.eql(u8, body, case.body));
+        try harness.stub.route(case.path, .{ .body = body });
+        var client = try harness.client(.{ .retries = 1, .cache = null });
+        defer client.deinit();
+        var diag: vpndetection.Diagnostics = .{};
+        const failed = callFor(&client, case.path, &diag);
+        var sent: usize = 0;
+        for (harness.stub.seen()) |call| {
+            if (std.mem.eql(u8, call.path, case.path)) sent += 1;
+        }
+        const refused = if (failed) |err| err == error.ServerError else false;
+        if (!refused or sent != 2 or diag.status != 200) {
+            std.debug.print("{s} with {s}: {s}, sent {d}, status {?d}\n", .{ case.path, if (case.to.len > 0) case.to else case.from, if (failed) |err| @errorName(err) else "answered", sent, diag.status });
+            failures += 1;
+        }
+    }
+    try std.testing.expectEqual(0, failures);
+}
+
+test "a batch entry with a member of the wrong type or a malformed date fails that address alone" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/batch", .{
+        .body = "{\"results\":{\"1.1.1.1\":{\"ip\":\"1.1.1.1\",\"is_vpn\":true,\"dcproxy\":{\"hits\":\"3\"}}," ++
+            "\"8.8.8.8\":{\"ip\":\"8.8.8.8\",\"is_vpn\":true,\"vpn\":{\"last_seen\":\"tomorrow\"}}," ++
+            "\"9.9.9.9\":{\"ip\":\"9.9.9.9\",\"is_vpn\":true,\"vpn\":{\"last_seen\":\"2026-10-20\"}}}}",
+        .verbatim = true,
+    });
+    var client = try harness.client(.{ .retries = 2 });
+    defer client.deinit();
+    var batch = try client.lookupBatch(&.{ "1.1.1.1", "8.8.8.8", "9.9.9.9" }, .{});
+    defer batch.deinit();
+
+    try std.testing.expectEqual(1, harness.stub.callCount());
+    for ([_][]const u8{ "1.1.1.1", "8.8.8.8" }) |ip| switch (batch.get(ip).?) {
+        .ok => {
+            std.debug.print("{s} answered\n", .{ip});
+            return error.TestUnexpectedResult;
+        },
+        .failed => |failure| {
+            try std.testing.expectEqual(error.ServerError, failure.err);
+            try std.testing.expectEqual(@as(?u16, 200), failure.diagnostics.status);
+        },
+    };
+    try std.testing.expect(batch.get("9.9.9.9").? == .ok);
+}

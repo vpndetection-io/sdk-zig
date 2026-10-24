@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const strict = @import("strict.zig");
+
 const Allocator = std.mem.Allocator;
 
 /// What the API answers for one address, exactly as the spec describes it.
@@ -184,7 +186,7 @@ pub fn parseServed(gpa: Allocator, body: []const u8) ParseError!Lookup {
 
     const arena = lookup.arena.allocator();
     lookup.raw = try arena.dupe(u8, body);
-    lookup.value = std.json.parseFromSliceLeaky(Answer, arena, lookup.raw, .{
+    lookup.value = strict.parseLeaky(Answer, arena, lookup.raw, .{
         // A field this version does not model must not fail the answer, or
         // every consumer breaks the day the API grows one.
         .ignore_unknown_fields = true,

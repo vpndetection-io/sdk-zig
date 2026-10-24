@@ -298,6 +298,40 @@ test "a 2xx without a required member is an ordinary error" {
     }
 }
 
+// `std.json` reads a numeric string into an integer member, so through 4.9.0 a
+// device authorization answering `"expires_in":"600"` returned 600 as if it
+// were the answer. It is the wrong type, as in every other SDK.
+test "a numeric string where an integer is due is an ordinary error" {
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const cases = [_]struct { operation: []const u8, member: []const u8, requests: usize }{
+        .{ .operation = "deviceAuthorization", .member = "expires_in", .requests = 3 },
+        .{ .operation = "deviceAuthorization", .member = "interval", .requests = 3 },
+        .{ .operation = "exchangeDeviceCode", .member = "expires_in", .requests = 1 },
+    };
+    for (cases) |case| {
+        var body = try std.json.parseFromSliceLeaky(std.json.Value, arena, every_required_member, .{});
+        try body.object.put(arena, case.member, .{ .string = "600" });
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try routeEveryPath(harness, .ok(try corpus.json(arena, body)));
+        var client = try harness.client(.{ .retries = 2 });
+        defer client.deinit();
+
+        var diagnostics: vpndetection.Diagnostics = .{};
+        const args: corpus.OauthArgs = .{ .deviceCode = "x" };
+        const outcome = callOperationWith(&client, case.operation, args, &diagnostics);
+        std.testing.expectError(error.ServerError, outcome) catch |err| {
+            std.debug.print("{s} {s}\n", .{ case.operation, case.member });
+            return err;
+        };
+        try std.testing.expectEqual(@as(?u16, 200), diagnostics.status);
+        try std.testing.expectEqual(case.requests, harness.stub.callCount());
+    }
+}
+
 // Discovery and device authorization take the client's retries, so a 2xx they
 // cannot read is sent again like a 5xx; an exchange spends what it presents and
 // is sent once. Either way it is `error.ServerError` with the status kept.

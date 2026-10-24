@@ -1,6 +1,7 @@
 const std = @import("std");
 
 const errors = @import("errors.zig");
+const strict = @import("strict.zig");
 
 const Allocator = std.mem.Allocator;
 const CallError = errors.CallError;
@@ -261,7 +262,7 @@ pub fn getParsed(
 
             const arena = parsed.allocator();
             const owned = try arena.dupe(u8, body);
-            const value = std.json.parseFromSliceLeaky(T, arena, owned, .{
+            const value = strict.parseLeaky(T, arena, owned, .{
                 .ignore_unknown_fields = true,
             }) catch {
                 self.request.diagnostics.setMessage("the answer did not match the documented shape");
