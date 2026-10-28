@@ -1211,6 +1211,29 @@ test "a batch entry with a member of the wrong type or a malformed date fails th
     try std.testing.expect(batch.get("9.9.9.9").? == .ok);
 }
 
+test "a date-time in any of RFC 3339's spellings is read" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    const arena = harness.stub.arena.allocator();
+    try harness.stub.route("/api/v1/entitlement", .{ .body = try std.mem.replaceOwned(u8, arena, entitlement_ok, "2026-10-01T00:00:00Z", "2026-10-01t00:00:00z") });
+    try harness.stub.route("/api/v1/database/list", .{ .body = try std.mem.replaceOwned(u8, arena, list_ok, "2026-01-01T00:00:00Z", "2026-01-01t00:00:00Z") });
+    try harness.stub.route("/api/v1/database/downloads", .{ .body = try std.mem.replaceOwned(u8, arena, downloads_ok, "2026-10-20T10:00:00Z", "2026-10-20T10:00:00z") });
+    var client = try harness.client(.{ .retries = 2, .cache = null });
+    defer client.deinit();
+
+    const entitlement = try client.myEntitlement();
+    defer entitlement.deinit();
+    try std.testing.expectEqualStrings("2026-10-01t00:00:00z", entitlement.value.usage.window_start);
+    const catalog = try client.database().list(.{});
+    defer catalog.deinit();
+    try std.testing.expectEqualStrings("2026-01-01t00:00:00Z", catalog.value[0].starts.?);
+    const downloads = try client.database().downloads(null, .{});
+    defer downloads.deinit();
+    try std.testing.expectEqualStrings("2026-10-20T10:00:00z", downloads.value[0].created);
+    try std.testing.expectEqual(3, harness.stub.callCount());
+}
+
 // A proxy's or a gateway's own refusal is classified by its status alone, and
 // sent once, whatever its body is and whatever it is labeled as.
 test "a 4xx whose body is not the API's is classified by its status and sent once" {

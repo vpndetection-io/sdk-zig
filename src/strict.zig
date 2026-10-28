@@ -165,10 +165,10 @@ pub fn isDate(text: []const u8) bool {
 }
 
 /// `YYYY-MM-DDTHH:MM:SS`, an optional fraction, then `Z` or `+HH:MM`/`-HH:MM`,
-/// at a time that exists: no hour 24, no minute or second 60, in the time and
-/// in the zone alike.
+/// its `T` and `Z` in either case, at a time that exists: no hour 24, no minute
+/// or second 60, in the time and in the zone alike.
 pub fn isDateTime(text: []const u8) bool {
-    if (text.len < 20 or !isDate(text[0..10]) or text[10] != 'T') return false;
+    if (text.len < 20 or !isDate(text[0..10]) or (text[10] != 'T' and text[10] != 't')) return false;
     if (!isClock(text[11..19], true)) return false;
     var rest = text[19..];
     if (rest[0] == '.') {
@@ -177,7 +177,7 @@ pub fn isDateTime(text: []const u8) bool {
         if (digits == 1) return false;
         rest = rest[digits..];
     }
-    if (rest.len == 1) return rest[0] == 'Z';
+    if (rest.len == 1) return rest[0] == 'Z' or rest[0] == 'z';
     return rest.len == 6 and (rest[0] == '+' or rest[0] == '-') and isClock(rest[1..6], false);
 }
 
@@ -247,12 +247,13 @@ test "a date is a full-date and a date-time carries its zone, each on a day and 
     }
     for ([_][]const u8{
         "2026-10-20T10:00:00Z", "2026-10-20T23:59:59.999999+05:30", "2026-10-20T00:00:00-23:59", "2028-02-29T12:00:00.5Z",
+        "2026-10-20t10:00:00Z", "2026-10-20T10:00:00z",             "2026-10-20t10:00:00z",
     }) |text| {
         try std.testing.expect(isDateTime(text));
     }
     for ([_][]const u8{
-        "2026-10-20",               "2026-10-20T10:00:00",       "2026-10-20 10:00:00Z",      "2026-10-20t10:00:00Z",
-        "2026-10-20T10:00:00z",     "2026-10-20T24:00:00Z",      "2026-10-20T10:60:00Z",      "2026-10-20T23:59:60Z",
+        "2026-10-20",               "2026-10-20T10:00:00",       "2026-10-20 10:00:00Z",      "2026-10-20x10:00:00Z",
+        "2026-10-20T10:00:00y",     "2026-10-20T24:00:00Z",      "2026-10-20T10:60:00Z",      "2026-10-20T23:59:60Z",
         "2026-10-20T10:00:00+0500", "2026-10-20T10:00:00+24:00", "2026-10-20T10:00:00+05:60", "2026-10-20T10:00:00.Z",
         "2026-02-30T10:00:00Z",     "2026-10-20T10:00Z",         "tomorrow",                  "2026-10-20T10:00:00Z ",
         "+2026-10-20T10:00:00Z",
