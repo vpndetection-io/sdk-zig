@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.10.2 - 2026-10-28
+
+### Fixes
+
+- Read a date-time whose T or Z is lowercase ([`08bdc44`](https://github.com/vpndetection-io/sdk-zig/commit/08bdc44f69756243c27ad3be7e7c6c3fcf70c71b))
+
 ## 4.10.1 - 2026-10-26
 
 ### Fixes
