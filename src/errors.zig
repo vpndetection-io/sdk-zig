@@ -88,7 +88,7 @@ pub fn classify(status: u16, retry_after_present: bool) Error {
         return error.Forbidden;
     }
     // Any other 4xx is a CLIENT error. Falling through to the server_error
-    // default would make it retryable, so a bad dataset id would be retried
+    // default would make it retryable, so a bad dataset ID would be retried
     // twice before failing. Classify on the RANGE, not on an enumerated list.
     if (status >= 400 and status < 500) {
         return error.BadRequest;

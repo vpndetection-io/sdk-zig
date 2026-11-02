@@ -23,7 +23,7 @@ const Io = std.Io;
 /// What a test is allowed to remember about one request.
 pub const Fact = struct {
     method: std.http.Method,
-    /// Path only. A query string carries the dataset id and the format, and on
+    /// Path only. A query string carries the dataset ID and the format, and on
     /// some endpoints an API key, so it is dropped before anything is stored.
     path: []const u8,
     /// Whether the request carried the tier's key. Without this a rung is

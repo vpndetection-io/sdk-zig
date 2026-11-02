@@ -56,7 +56,7 @@ test "live lookup" {
 }
 
 // Keyless: registering stores nothing until a person approves the client, so
-// it is safe against the real server, which answers a self-registered id.
+// it is safe against the real server, which answers a self-registered ID.
 test "live register" {
     const gpa = std.testing.allocator;
     var threaded: Io.Threaded = .init(gpa, .{});

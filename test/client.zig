@@ -548,7 +548,7 @@ test "checksums returns the whole digest set from under its key" {
     try std.testing.expectEqualStrings("s512", digests.value.sha512.?);
 }
 
-// A license is held against a FAMILY, and the downloadable ids hang off its
+// A license is held against a FAMILY, and the downloadable IDs hang off its
 // versions. The spec used to claim `{id, formats}` here while the service
 // answered a family, so `list` handed back structs whose every field was empty
 // and `list` into `download` was broken in every SDK.
@@ -581,7 +581,7 @@ test "the database list unwraps a family and its versions" {
     try std.testing.expectEqualStrings("csvgz", family.versions[0].sample_formats.?[0]);
 }
 
-// A 404 from a bad dataset id is a CLIENT error. Letting it fall through to the
+// A 404 from a bad dataset ID is a CLIENT error. Letting it fall through to the
 // retryable server_error default is the mistake both the Node and Go SDKs
 // shipped with.
 test "an unknown dataset is not retried" {

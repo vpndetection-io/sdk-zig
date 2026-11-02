@@ -3,7 +3,7 @@
 //!
 //! The transfer is budgeted before it starts. Metadata publishes a size per
 //! format, and that size is checked against the ceiling below FIRST, so a
-//! mistaken dataset id can never quietly pull one of the gigabyte datasets
+//! mistaken dataset ID can never quietly pull one of the gigabyte datasets
 //! through CI.
 
 const std = @import("std");
@@ -23,7 +23,7 @@ const format: vpndetection.Format = .csvgz;
 /// when a transfer must not go ahead.
 const ceiling = 8 << 20;
 
-/// A real catalogue id the max organization holds no license for.
+/// A real catalogue ID the max organization holds no license for.
 const unlicensed_id = "hosting_ip_v1";
 
 test "the licensed catalogue answers the schema the client was written from" {
@@ -64,7 +64,7 @@ test "the licensed catalogue answers the schema the client was written from" {
             try std.testing.expectEqualStrings("unlicensed", family.standing);
         }
         // The point of the family shape: a license covers the family, and these
-        // are the ids the download and checksum calls take. Before the spec was
+        // are the IDs the download and checksum calls take. Before the spec was
         // corrected this list did not exist, so `list` could not tell a caller
         // what to download.
         try std.testing.expect(family.versions.len > 0);
