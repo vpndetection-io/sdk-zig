@@ -10,7 +10,7 @@ const Param = http.Transport.Param;
 const Parsed = std.json.Parsed;
 
 /// Not every dataset is built in every format: the `_provider` catalogs are
-/// keyed by provider id rather than by IP range, so no MMDB exists for them.
+/// keyed by provider ID rather than by IP range, so no MMDB exists for them.
 pub const Format = enum {
     csvgz,
     mmdb,
@@ -44,7 +44,7 @@ pub const DatabaseApi = struct {
 
     /// The database families your organization is licensed to download.
     ///
-    /// A license covers a family, so the id you pass to a download is one of
+    /// A license covers a family, so the ID you pass to a download is one of
     /// `Database.versions`, not `Database.base`.
     pub fn list(
         self: DatabaseApi,
@@ -302,7 +302,7 @@ pub const DatabaseApi = struct {
 /// Mirrors `components.schemas.Database` in spec/openapi.yaml.
 ///
 /// One dataset FAMILY. A license is held against the family, while a download
-/// names one version of it, so the ids `download`, `downloadBytes`,
+/// names one version of it, so the IDs `download`, `downloadBytes`,
 /// `downloadUrl` and `checksums` take come from `versions` rather than from
 /// here.
 ///
@@ -342,9 +342,9 @@ pub const Database = struct {
 };
 
 /// Mirrors `components.schemas.DatabaseVersion`. One published version of a
-/// family, and the only place a downloadable id comes from.
+/// family, and the only place a downloadable ID comes from.
 pub const DatabaseVersion = struct {
-    /// The versioned dataset id, e.g. `vpn_ip_v1`. This is what you download.
+    /// The versioned dataset ID, e.g. `vpn_ip_v1`. This is what you download.
     id: []const u8,
     version: i64,
     summary: ?[]const u8 = null,

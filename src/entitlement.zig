@@ -13,7 +13,7 @@ pub const Entitlement = struct {
     usage: EntitlementUsage,
 };
 
-/// The credential itself. The key is never echoed back - only its id, which is
+/// The credential itself. The key is never echoed back - only its ID, which is
 /// what the console shows and what you can act on.
 pub const EntitlementApikey = struct {
     id: []const u8,
