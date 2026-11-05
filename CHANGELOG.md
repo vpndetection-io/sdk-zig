@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.10.3 - 2026-11-05
+
+### Fixes
+
+- End a device poll once its wait runs to the deadline ([`1e69ee4`](https://github.com/vpndetection-io/sdk-zig/commit/1e69ee47b3ba6a6df09dfddf33765611ceb9ccf1))
+
 ## 4.10.2 - 2026-10-28
 
 ### Fixes
