@@ -493,6 +493,35 @@ test "a slow_down at the top of the interval saturates" {
     try std.testing.expectEqualSlices(i64, &.{ max - 2, 2 }, FakeClock.waitsInSeconds());
 }
 
+// A timer that wakes before the clock has moved its delay leaves the deadline
+// reading as not yet reached, so a poll that read the clock again would ask once
+// more at it. A wait cut to the deadline, or ending at it, ends the poll.
+test "a wait that ran to the deadline ends the poll, however early the timer woke" {
+    const gpa = std.testing.allocator;
+    for ([_]i64{ 5, 3 }) |interval| {
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        try harness.stub.sequence("/oauth/token", &.{.{ .status = 400, .body = "{\"error\":\"authorization_pending\"}" }});
+        var url_buffer: [64]u8 = undefined;
+        var client = try vpndetection.Client.init(gpa, FakeClock.installShort(harness.io(), 500 * std.time.ns_per_us), .{
+            .base_url = harness.stub.baseUrl(&url_buffer),
+        });
+        defer client.deinit();
+
+        var diagnostics: vpndetection.Diagnostics = .{};
+        try std.testing.expectError(error.OauthExpiredToken, client.oauth().pollDeviceToken(client_id, .{
+            .device_code = "mo_dc_x",
+            .user_code = "BCDF-GHJK",
+            .verification_uri = "https://app.example.test/device",
+            .expires_in = 3,
+            .interval = interval,
+        }, .{ .diagnostics = &diagnostics }));
+        try std.testing.expectEqual(0, harness.stub.seen().len);
+        try std.testing.expectEqualSlices(i64, &.{3}, FakeClock.waitsInSeconds());
+        try std.testing.expectEqual(null, diagnostics.status);
+    }
+}
+
 /// A `std.Io` whose `sleep` records the wait and returns at once, and whose
 /// clock reads the sum of those waits, over a real `Io` for everything else.
 /// Global state, because a vtable function receives only the real `Io`'s
@@ -502,17 +531,25 @@ const FakeClock = struct {
     var waits: [wait_bound]i96 = undefined;
     var wait_count: usize = 0;
     var elapsed: i96 = 0;
+    /// Each wait of at least 1 ms wakes this many nanoseconds before the clock
+    /// has moved its delay, as a runtime timer may.
+    var short: i96 = 0;
 
     /// Past this many waits the process ends: the poll could shrug off an error
     /// from `sleep`, and a wait that never returns would hang the suite.
     const wait_bound = 16;
 
     fn install(real: Io) Io {
+        return installShort(real, 0);
+    }
+
+    fn installShort(real: Io, short_ns: i96) Io {
         vtable = real.vtable.*;
         vtable.now = now;
         vtable.sleep = sleep;
         wait_count = 0;
         elapsed = 0;
+        short = short_ns;
         return .{ .userdata = real.userdata, .vtable = &vtable };
     }
 
@@ -538,7 +575,7 @@ const FakeClock = struct {
         const wait = timeout.duration.raw.nanoseconds;
         waits[wait_count] = wait;
         wait_count += 1;
-        elapsed += wait;
+        elapsed += if (wait >= std.time.ns_per_ms) wait - short else wait;
     }
 };
 

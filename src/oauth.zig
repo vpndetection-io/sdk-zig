@@ -400,14 +400,19 @@ pub const OauthApi = struct {
             // only the time left, and the expiry follows with nothing sent. In
             // full, an `interval` of 2147483647 held a poll with seconds left for
             // 68 years (4.3.2, measured 2026-09-26).
-            const left = Io.Clock.awake.now(io).durationTo(deadline).nanoseconds;
-            const wait = @max(@min(Io.Duration.fromSeconds(interval_s).nanoseconds, left), 0);
-            io.sleep(.fromNanoseconds(wait), .awake) catch |err| {
+            const left = @max(Io.Clock.awake.now(io).durationTo(deadline).nanoseconds, 0);
+            const interval = Io.Duration.fromSeconds(interval_s).nanoseconds;
+            const to_deadline = left <= interval;
+            io.sleep(.fromNanoseconds(if (to_deadline) left else interval), .awake) catch |err| {
                 diag.reset();
                 diag.setMessage(@errorName(err));
                 return error.Network;
             };
-            if (Io.Clock.awake.now(io).nanoseconds >= deadline.nanoseconds) {
+            // A wait that ran to the deadline ends the poll without reading the
+            // clock again: an `Io`'s timer may wake before its clock has moved
+            // the whole delay, and the deadline would then read as not yet
+            // reached, so one more request would go out at it.
+            if (to_deadline or Io.Clock.awake.now(io).nanoseconds >= deadline.nanoseconds) {
                 diag.reset();
                 diag.setOauth("expired_token", null);
                 return error.OauthExpiredToken;
