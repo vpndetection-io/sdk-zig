@@ -740,6 +740,56 @@ test "download streams a dataset to disk and sends no key to object storage" {
     try std.testing.expectEqualStrings("", harness.stub.authorizationFor(storage_path).?);
 }
 
+test "each download asks for the build it is given, and none without one" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try routeDownload(harness, .ok(try payload(harness)));
+
+    var scratch = support.Scratch.start();
+    defer scratch.deinit();
+
+    var client = try harness.client(.{ .api_key = "key" });
+    defer client.deinit();
+    const database = client.database();
+    const build = "20261105.0t53s5";
+    gpa.free(try database.downloadUrl("cdn_ip_v1", .csvgz, .{}));
+    gpa.free(try database.downloadUrl("cdn_ip_v1", .csvgz, .{ .build = build }));
+    _ = try database.download("cdn_ip_v1", .csvgz, scratch.path("data.csv.gz"), .{ .build = build });
+    gpa.free(try database.downloadBytes("cdn_ip_v1", .csvgz, .{ .build = build }));
+
+    const live = "/api/v1/database/download?id=cdn_ip_v1&format=csvgz";
+    const pinned = live ++ "&build=" ++ build;
+    const want = [_][]const u8{ live, pinned, pinned, pinned };
+    var seen: usize = 0;
+    for (harness.stub.calls.items) |call| {
+        if (!std.mem.eql(u8, call.path, "/api/v1/database/download")) continue;
+        try std.testing.expect(seen < want.len);
+        try std.testing.expectEqualStrings(want[seen], call.target);
+        seen += 1;
+    }
+    try std.testing.expectEqual(want.len, seen);
+}
+
+// A pruned build is gone for good, so asking again cannot help.
+test "a build no longer kept is a BadRequest with its 410, sent once" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v1/database/download", .{ .status = 410, .body = "{\"rc\":\"BUILD_GONE\"}" });
+
+    var client = try harness.client(.{ .api_key = "key", .retries = 3 });
+    defer client.deinit();
+    var diagnostics: vpndetection.Diagnostics = .{};
+
+    try std.testing.expectError(error.BadRequest, client.database().downloadBytes("cdn_ip_v1", .csvgz, .{
+        .build = "20261029.abc123",
+        .diagnostics = &diagnostics,
+    }));
+    try std.testing.expectEqual(@as(?u16, 410), diagnostics.status);
+    try std.testing.expect(harness.stub.calledOnly("/api/v1/database/download"));
+}
+
 test "downloadBytes agrees with the streamed copy byte for byte" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);

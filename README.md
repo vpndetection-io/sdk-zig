@@ -242,6 +242,13 @@ const written = try client.database().download(id, .mmdb, "vpn_ip.mmdb", .{});
 
 `downloadUrl` hands back the link rather than the bytes, so you choose how to move the file; the link authorizes the START of a transfer, so one already running is not interrupted when it lapses. The client never follows that redirect for you. `download` and `downloadBytes` do follow it, and that second request carries no API key: the link authorizes itself, and object storage has no business holding your credential.
 
+From 4.11.0, each of the three reads `build` from its options: the build a `database.updated` webhook names, so the file is the one whose `sha256` the webhook carries rather than whatever is live by the time you ask. Without it you get the live build. A build is kept 7 days, and one pruned since fails with `error.BadRequest` and status 410 in its `diagnostics`:
+
+```zig
+// dataset and build from a database.updated webhook's data
+_ = try client.database().download(dataset, .mmdb, "vpn_ip.mmdb", .{ .build = build });
+```
+
 ### Sign in with OAuth (device flow)
 
 A program running on the person's own machine can let them sign in with a browser and pick one of their API keys, instead of asking them to paste it:

@@ -121,12 +121,13 @@ pub const DatabaseApi = struct {
         const query = [_]Param{
             .{ .name = "id", .value = id },
             .{ .name = "format", .value = format.toString() },
+            .{ .name = "build", .value = options.build orelse "" },
         };
         var scratch: Diagnostics = .{};
         return http.send(&self.client.transport, self.client.gpa, self.client.io, .{
             .kind = .location,
             .path = "/api/v1/database/download",
-            .query = &query,
+            .query = if (options.build == null) query[0..2] else query[0..],
             .retries = options.retries orelse self.client.retries,
             .timeout = options.timeout orelse self.client.timeout,
             .diagnostics = options.diagnostics orelse &scratch,
@@ -260,6 +261,7 @@ pub const DatabaseApi = struct {
             .retries = options.retries,
             .timeout = options.timeout,
             .diagnostics = diag,
+            .build = options.build,
         });
         defer gpa.free(url);
 

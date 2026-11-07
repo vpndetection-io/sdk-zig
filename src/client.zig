@@ -64,6 +64,12 @@ pub const CallOptions = struct {
     /// the call fails. A Zig error carries no payload, so this is how the
     /// detail behind one is reached.
     diagnostics: ?*Diagnostics = null,
+    /// One build of a dataset, by the name a `database.updated` webhook gives
+    /// it, so the file is the one whose `sha256` the webhook carries. Read by
+    /// `downloadUrl`, `download` and `downloadBytes` alone; null, the build
+    /// that is live. A build is kept 7 days; one pruned since fails with
+    /// `error.BadRequest` and status 410, sent once.
+    build: ?[]const u8 = null,
 };
 
 /// Per-call overrides for one batch.

@@ -91,6 +91,10 @@ fn examples(gpa: std.mem.Allocator) !void {
     const written = try client.database().download(id, .mmdb, "vpn_ip.mmdb", .{});
     _ = written;
 
+    const dataset: []const u8 = id;
+    const build: []const u8 = "20261105.0t53s5";
+    _ = try client.database().download(dataset, .mmdb, "vpn_ip.mmdb", .{ .build = build });
+
     const size = try client.database().metadata(id, .{});
     defer size.deinit();
 
