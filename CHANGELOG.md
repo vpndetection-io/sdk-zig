@@ -2,6 +2,16 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.11.0 - 2026-11-07
+
+### Features
+
+- Download the build a database.updated webhook names ([`39ebae0`](https://github.com/vpndetection-io/sdk-zig/commit/39ebae0ea7162d140d16f29e89219bb9595d4055))
+
+### Fixes
+
+- Re-pin the spec to 2026.11.05: the download's build parameter ([`a8ee889`](https://github.com/vpndetection-io/sdk-zig/commit/a8ee8892f37a1d8f6cb99904fe40efe92abc7a65))
+
 ## 4.10.3 - 2026-11-05
 
 ### Fixes
