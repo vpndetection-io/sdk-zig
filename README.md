@@ -20,7 +20,7 @@ const vpndetection = b.dependency("vpndetection", .{ .target = target, .optimize
 exe.root_module.addImport("vpndetection", vpndetection.module("vpndetection"));
 ```
 
-Requires Zig **0.16.0** or **0.17.0**. Zig is pre-1.0 and its standard library still changes shape between releases, so no other version is supported; CI builds and tests on both, and 0.16.0 is pinned in `scripts/Dockerfile`.
+Requires Zig **0.16.0**, **0.17.0** or **0.17.1**. Zig is pre-1.0 and its standard library still changes shape between releases, so no other version is supported; CI builds and tests on each, and 0.16.0 is pinned in `scripts/Dockerfile`.
 
 ## Usage
 

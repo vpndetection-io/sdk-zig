@@ -30,15 +30,19 @@ jobs:
       # that moved.
       - run: ./scripts/check-spec.sh
 
-  # The newest supported Zig beside the pinned one. Formatting is checked on
-  # the pinned version alone: 0.17's `zig fmt` rewrites `@intFromEnum` to
-  # `@backingInt`, which 0.16 does not have.
+  # Every 0.17 release beside the pinned one, each a version the README names.
+  # Formatting is checked on the pinned version alone: 0.17's `zig fmt` rewrites
+  # `@intFromEnum` to `@backingInt`, which 0.16 does not have.
   newest:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        zig: ['0.17.0', '0.17.1']
     steps:
       - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
         with:
-          version: 0.17.0
+          version: ${{ matrix.zig }}
       - run: zig build test
       - run: zig build example
