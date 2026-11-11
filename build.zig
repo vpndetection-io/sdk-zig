@@ -45,7 +45,7 @@ pub fn build(b: *std.Build) void {
     example_step.dependOn(&b.addInstallArtifact(example, .{}).step);
 
     // Kept out of `test` so a plain build stays offline and costs no quota.
-    const live_step = b.step("live", "Query the real API (needs network, uses your daily allowance)");
+    const live_step = b.step("live", "Query the real API (needs network, counts against your limit)");
     const live_tests = suite(b, vpndetection, target, optimize, "test/live.zig");
     const run_live = b.addRunArtifact(live_tests);
     run_live.has_side_effects = true;

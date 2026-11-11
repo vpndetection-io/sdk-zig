@@ -32,8 +32,9 @@ pub const CacheOptions = struct {
 };
 
 pub const Options = struct {
-    /// Omit it entirely to use the free tier, which answers `ip` and `is_vpn`
-    /// and allows 1000 requests per day per source address.
+    /// Omit it to look up without one: a lookup then answers `ip`, `is_vpn`,
+    /// the Tor and relay members, `location` and `asn`, up to 60 a minute from
+    /// each address, and a batch is refused as unauthorized.
     api_key: ?[]const u8 = null,
     base_url: []const u8 = default_base_url,
     /// Null disables caching, so every lookup of a non-bogon address is served.
@@ -380,6 +381,8 @@ pub const Client = struct {
     /// value, so one bad entry cannot lose the rest of the answers: the API
     /// reports a per-entry failure with the status the single lookup would have
     /// answered, and a chunk that fails as a whole marks every address in it.
+    /// The batch endpoint needs an API key, a free one included: without one,
+    /// every address sent to it fails with `Unauthorized`.
     pub fn lookupBatch(
         self: *Client,
         ips: []const []const u8,

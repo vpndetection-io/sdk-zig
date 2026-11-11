@@ -3,8 +3,8 @@ const std = @import("std");
 /// Why a request failed.
 ///
 /// `RateLimited` and `QuotaExceeded` both arrive as HTTP 429 and are NOT the
-/// same thing. A rate limit is the API protecting itself, carries `Retry-After`,
-/// and retrying works. A spent quota carries no such header, and retrying will
+/// same thing. A rate limit is the API protecting itself, or a lookup without a
+/// key past 60 a minute, carries `Retry-After`, and retrying works. A spent quota carries no such header, and retrying will
 /// not help until the window rolls over or the limit is raised. The header is
 /// the only thing that distinguishes them.
 pub const Error = error{

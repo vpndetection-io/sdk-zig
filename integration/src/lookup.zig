@@ -15,7 +15,7 @@ const staging = @import("staging.zig");
 
 const Tier = staging.tiers.Tier;
 
-test "an unauthenticated lookup answers ip and is_vpn" {
+test "a lookup without a key answers ip and is_vpn at the least" {
     const gpa = std.testing.allocator;
     var fixture = try staging.answerFor(gpa, .unauth);
     defer fixture.deinit();
@@ -147,9 +147,35 @@ test "a bogon is answered without touching the network" {
     }
 }
 
-test "a batch collapses duplicates and keeps bogons off the wire" {
+test "a batch without a key is refused once, and its bogon still answered" {
     const gpa = std.testing.allocator;
     const rung = try staging.Rung.start(gpa, .unauth, .{ .cache = null });
+    defer rung.deinit();
+
+    var batch = try rung.client.lookupBatch(&.{ staging.probe, "10.0.0.1" }, .{});
+    defer batch.deinit();
+
+    switch (batch.get("10.0.0.1").?) {
+        .ok => |answer| try std.testing.expect(answer.is_bogon),
+        .failed => return error.TestExpectedEqual,
+    }
+    switch (batch.get(staging.probe).?) {
+        .ok => return error.TestExpectedError,
+        .failed => |failure| {
+            try std.testing.expectEqual(error.Unauthorized, failure.err);
+            try std.testing.expectEqual(@as(?u16, 401), failure.diagnostics.status);
+        },
+    }
+    // One request, never retried.
+    try std.testing.expectEqual(1, rung.proxy.seen().len);
+    try std.testing.expectEqualStrings("/batch", rung.proxy.seen()[0].path);
+}
+
+test "a batch collapses duplicates and keeps bogons off the wire" {
+    // A batch needs a key, and the free one is the cheapest that has it.
+    try Tier.free.require();
+    const gpa = std.testing.allocator;
+    const rung = try staging.Rung.start(gpa, .free, .{ .cache = null });
     defer rung.deinit();
 
     const input = [_][]const u8{ staging.probe, "8.8.8.8", staging.probe, "10.0.0.1", "8.8.8.8" };
@@ -163,6 +189,7 @@ test "a batch collapses duplicates and keeps bogons off the wire" {
     var sent: std.StringArrayHashMapUnmanaged(void) = .empty;
     defer sent.deinit(gpa);
     for (rung.proxy.seen()) |fact| {
+        try std.testing.expect(fact.carried_key);
         try std.testing.expectEqual(std.http.Method.POST, fact.method);
         try std.testing.expectEqualStrings("/batch", fact.path);
         var chunk: std.StringArrayHashMapUnmanaged(void) = .empty;

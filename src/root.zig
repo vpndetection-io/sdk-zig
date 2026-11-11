@@ -2,9 +2,10 @@
 //! API: anonymity detection covering VPNs, residential proxies, Tor nodes,
 //! hosting servers, CDNs and relays.
 //!
-//! Start with `Client.init` and `Client.lookup`. No API key is needed: the free
-//! tier answers `ip` and `is_vpn` and allows 1000 requests per day per source
-//! address.
+//! Start with `Client.init` and `Client.lookup`. No API key is needed: without
+//! one a lookup answers `ip`, `is_vpn`, the Tor and relay members, `location`
+//! and `asn`, up to 60 a minute from each address, and a batch is refused as
+//! `error.Unauthorized`.
 //!
 //! ```
 //! var threaded: std.Io.Threaded = .init(gpa, .{});
@@ -20,7 +21,7 @@
 //!
 //! # Absent is not false
 //!
-//! Every field beyond `ip` and `is_vpn` is optional, because your plan decides
+//! Every field beyond `ip` and `is_vpn` is optional, because your key decides
 //! which of them the API sends. `null` means "not in your plan", which is a
 //! different answer from `false`. Read the optional itself wherever that
 //! matters, or `orelse false` when all you want to know is whether an address

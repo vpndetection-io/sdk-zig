@@ -92,7 +92,7 @@ pub const Fixture = struct {
 /// Looks `probe` up on one tier and checks, BEFORE anything is compared, that
 /// the key was actually on the wire.
 ///
-/// An unsent key answers the free shape, which satisfies every containment
+/// An unsent key answers the keyless shape, which satisfies every containment
 /// check vacuously, so a whole ladder can read as green while the credential
 /// never left the process.
 pub fn answerFor(gpa: Allocator, tier: Tier) !Fixture {

@@ -1,6 +1,6 @@
 //! A smoke test against the real API, kept out of `zig build test` so the suite
-//! stays offline and costs no quota. Set VPNDETECTION_API_KEY to exercise a paid
-//! plan's fields; without one it runs on the free tier.
+//! stays offline and costs no quota. Set VPNDETECTION_API_KEY to exercise a
+//! key's fields; without one it runs without a key.
 //!
 //!     ./scripts/zig.sh build live
 //!     VPNDETECTION_API_KEY=... ./scripts/zig.sh build live
@@ -41,8 +41,8 @@ test "live lookup" {
     try std.testing.expect(!clean.value.is_vpn);
 
     if (key == null) {
-        // The one assertion a stub cannot make honestly: the free tier does not
-        // include is_hosting, so it is ABSENT rather than false.
+        // The one assertion a stub cannot make honestly: an answer without a key
+        // does not include is_hosting, so it is ABSENT rather than false.
         try std.testing.expectEqual(@as(?bool, null), clean.value.is_hosting);
     }
 
