@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.12.2 - 2026-11-11
+
+### Fixes
+
+- Name the Unlimited tier and its terms, and re-pin the spec ([`a71af5b`](https://github.com/vpndetection-io/sdk-zig/commit/a71af5b7d053b11fd59c14426a7c55985c8236c8))
+
 ## 4.12.1 - 2026-11-11
 
 ### Fixes
