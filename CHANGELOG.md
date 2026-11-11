@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.12.1 - 2026-11-11
+
+### Fixes
+
+- Re-pin the spec's 2026.11.11 rebuild: plainer words on lookups without a key ([`50ce776`](https://github.com/vpndetection-io/sdk-zig/commit/50ce7764380ad15e5559531b0b3e80dec62e0413))
+
 ## 4.12.0 - 2026-11-11
 
 ### Features
