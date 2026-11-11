@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.13.0 - 2026-11-11
+
+### Features
+
+- Add trial_expired for a trial key's answers, and re-pin the spec ([`3fd5eca`](https://github.com/vpndetection-io/sdk-zig/commit/3fd5ecaf9bfe15858e0d857d2bfecfd7cbc8b343))
+
 ## 4.12.2 - 2026-11-11
 
 ### Fixes
