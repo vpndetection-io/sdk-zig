@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.13.1 - 2026-11-11
+
+### Fixes
+
+- Say the free plan's daily trial and Unlimited, the free plan, and re-pin the spec ([`ab87964`](https://github.com/vpndetection-io/sdk-zig/commit/ab8796460547c0c92de7fb34c5a13559902a4db2))
+
 ## 4.13.0 - 2026-11-11
 
 ### Features
