@@ -44,11 +44,14 @@ pub const Answer = struct {
     dcproxy: ?ProxyDetail = null,
     mobproxy: ?ProxyDetail = null,
     pubproxy: ?PubproxyDetail = null,
-    /// Where the address is. Every keyed answer carries it, free and paid.
+    /// Where the address is. Every answer carries it, with or without a key.
     location: ?Location = null,
-    /// The AS announcing the address. Every keyed answer carries it, free and
-    /// paid.
+    /// The AS announcing the address. Every answer carries it, with or without
+    /// a key.
     asn: ?Asn = null,
+    /// On a Trial key's answers only: false while the organization's 100 full
+    /// answers for the UTC day last, true once the answer is Unlimited's.
+    trial_expired: ?bool = null,
 };
 
 /// Dates arrive as `YYYY-MM-DD` strings and stay strings: Zig has no date type

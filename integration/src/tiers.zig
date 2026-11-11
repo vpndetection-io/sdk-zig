@@ -18,17 +18,17 @@ const std = @import("std");
 /// is what a client actually has to keep.
 pub const Tier = enum {
     unauth,
-    free,
+    trial,
     starter,
     scale,
     max,
 
-    pub const ladder = [_]Tier{ .unauth, .free, .starter, .scale, .max };
+    pub const ladder = [_]Tier{ .unauth, .trial, .starter, .scale, .max };
 
     pub fn secret(self: Tier) ?[]const u8 {
         return switch (self) {
             .unauth => null,
-            .free => "VPNDETECTION_STAGING_KEY_FREE",
+            .trial => "VPNDETECTION_STAGING_KEY_FREE",
             .starter => "VPNDETECTION_STAGING_KEY_STARTER",
             .scale => "VPNDETECTION_STAGING_KEY_SCALE",
             .max => "VPNDETECTION_STAGING_KEY_MAX",
@@ -36,13 +36,15 @@ pub const Tier = enum {
     }
 
     /// What this rung promises against whichever observable rung sits below it.
-    /// A free key serves strictly more than no key, and the first paid tier
-    /// strictly more than a free key; every paid plan answers the same fields,
-    /// so a higher paid tier only keeps what the one under it serves.
+    /// The first paid tier serves strictly more than no key; every paid plan
+    /// answers the same fields, so a higher paid tier only keeps what the one
+    /// under it serves. The trial key's answer is a paid one for its
+    /// organization's first 100 lookups of the UTC day and Unlimited's after, so
+    /// it promises nothing and is never the rung a later one is compared against.
     pub fn widens(self: Tier) bool {
         return switch (self) {
-            .unauth, .scale, .max => false,
-            .free, .starter => true,
+            .unauth, .trial, .scale, .max => false,
+            .starter => true,
         };
     }
 

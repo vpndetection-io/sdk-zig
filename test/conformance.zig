@@ -337,7 +337,7 @@ test "an entry error is classified by its status" {
     try harness.stub.routeLookup("1.1.1.1");
     try harness.stub.route("/8.8.8.8", .{
         .status = 429,
-        .body = "{\"error\":\"monthly request allowance spent; upgrade your plan for more lookups\"}",
+        .body = "{\"error\":\"overage cap reached; raise or remove it in Billing\"}",
     });
     try harness.stub.route("/9.9.9.9", .{ .status = 500, .body = "{\"error\":\"lookup failed\"}" });
 

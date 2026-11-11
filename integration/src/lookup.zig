@@ -50,7 +50,7 @@ test "each tier serves a superset of the tier below" {
     for (open) |tier| {
         var fixture = try staging.answerFor(gpa, tier);
         errdefer fixture.deinit();
-        std.debug.print("{t}: {d} fields\n", .{ tier, fixture.fields() });
+        std.debug.print("{t}: {d} fields\n", .{ tier, tierFields(fixture) });
 
         if (below) |lower| {
             for (lower.served.value.object.keys()) |field| {
@@ -61,19 +61,89 @@ test "each tier serves a superset of the tier below" {
             }
             // Without this, a run in which every key resolved to the same plan
             // would pass: identical sets satisfy containment in both directions.
-            if (tier.widens() and fixture.fields() <= lower.fields()) {
+            if (tier.widens() and tierFields(fixture) <= tierFields(lower)) {
                 std.debug.print("{t} answers {d} field(s) and {t} answers {d}, so it is no wider\n", .{
-                    tier,            fixture.fields(),
-                    lower.rung.tier, lower.fields(),
+                    tier,            tierFields(fixture),
+                    lower.rung.tier, tierFields(lower),
                 });
                 return error.TestExpectedEqual;
             }
+        }
+        if (tier == .trial) {
+            fixture.deinit();
+            continue;
         }
         if (below) |*previous| {
             previous.deinit();
         }
         below = fixture;
     }
+}
+
+/// trial_expired marks a trial key's answers, and no other: it is not a field a
+/// tier serves.
+fn tierFields(fixture: staging.Fixture) usize {
+    return fixture.fields() - @intFromBool(fixture.has("trial_expired"));
+}
+
+test "a trial key's answer is a paid one or Unlimited's, and says which" {
+    try Tier.trial.require();
+    const gpa = std.testing.allocator;
+    var fixture = try staging.answerFor(gpa, .trial);
+    defer fixture.deinit();
+
+    const expired = switch (fixture.served.value.object.get("trial_expired") orelse return error.TestExpectedEqual) {
+        .bool => |value| value,
+        else => return error.TestExpectedEqual,
+    };
+    // The organization's first 100 lookups of the UTC day are answered in full,
+    // and the rest as Unlimited's: which half a run sees depends on the day.
+    try std.testing.expectEqual(!expired, fixture.has("is_hosting"));
+}
+
+test "a trial key's batch of two is refused as a bad request, once" {
+    try Tier.trial.require();
+    const gpa = std.testing.allocator;
+    const rung = try staging.Rung.start(gpa, .trial, .{ .cache = null });
+    defer rung.deinit();
+
+    var batch = try rung.client.lookupBatch(&.{ staging.probe, "8.8.8.8" }, .{});
+    defer batch.deinit();
+
+    for ([_][]const u8{ staging.probe, "8.8.8.8" }) |ip| {
+        switch (batch.get(ip).?) {
+            .ok => return error.TestExpectedError,
+            .failed => |failure| {
+                try std.testing.expectEqual(error.BadRequest, failure.err);
+                try std.testing.expectEqual(@as(?u16, 402), failure.diagnostics.status);
+            },
+        }
+    }
+    // One request, never retried.
+    try std.testing.expectEqual(1, rung.proxy.seen().len);
+    try std.testing.expectEqualStrings("/batch", rung.proxy.seen()[0].path);
+}
+
+test "a trial key's batch of one is answered" {
+    try Tier.trial.require();
+    const gpa = std.testing.allocator;
+    const rung = try staging.Rung.start(gpa, .trial, .{ .cache = null });
+    defer rung.deinit();
+
+    var batch = try rung.client.lookupBatch(&.{staging.probe}, .{});
+    defer batch.deinit();
+
+    switch (batch.get(staging.probe).?) {
+        .ok => {},
+        .failed => return error.TestExpectedEqual,
+    }
+    // Read off the wire: the published library may predate trial_expired.
+    const body = rung.proxy.body("/batch") orelse return error.TestExpectedEqual;
+    const parsed = try std.json.parseFromSlice(std.json.Value, gpa, body, .{});
+    defer parsed.deinit();
+    const results = parsed.value.object.get("results") orelse return error.TestExpectedEqual;
+    const answer = results.object.get(staging.probe) orelse return error.TestExpectedEqual;
+    try std.testing.expect(answer.object.get("trial_expired").? == .bool);
 }
 
 test "a field a higher tier serves is absent on a lower one, never false" {
@@ -172,10 +242,10 @@ test "a batch without a key is refused once, and its bogon still answered" {
 }
 
 test "a batch collapses duplicates and keeps bogons off the wire" {
-    // A batch needs a key, and the free one is the cheapest that has it.
-    try Tier.free.require();
+    // A batch needs a paid plan, and starter is the cheapest.
+    try Tier.starter.require();
     const gpa = std.testing.allocator;
-    const rung = try staging.Rung.start(gpa, .free, .{ .cache = null });
+    const rung = try staging.Rung.start(gpa, .starter, .{ .cache = null });
     defer rung.deinit();
 
     const input = [_][]const u8{ staging.probe, "8.8.8.8", staging.probe, "10.0.0.1", "8.8.8.8" };

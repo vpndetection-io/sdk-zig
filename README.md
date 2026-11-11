@@ -24,7 +24,7 @@ Requires Zig **0.16.0**, **0.17.0** or **0.17.1**. Zig is pre-1.0 and its standa
 
 ## Usage
 
-**No API key needed to start.** The Unlimited tier answers `ip`, `is_vpn`, Tor and relay detection, `location` and `asn`, with no daily or monthly cap, for [non-commercial use](https://vpndetection.io/terms#no-key). Commercial use, or a batch lookup, needs a key, a free one included.
+**No API key needed to start.** The Unlimited tier answers `ip`, `is_vpn`, Tor and relay detection, `location` and `asn`, with no daily or monthly cap, with a key or without one.
 
 ```zig
 const std = @import("std");
@@ -61,7 +61,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### With an API key
 
-A free key adds every other flag, `is_hosting`, `is_cdn` and the four proxy flags, at 50,000 lookups a month, and every paid plan answers every field, the provider, confidence and last-seen detail behind each flag included. The paid plans differ only in how many lookups they include. Create a key in the [console](https://app.vpndetection.io), then pass it in:
+Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, and the provider, confidence and last-seen detail behind each flag. The plans differ only in how many lookups they include, and a new account can try every field, 100 lookups a day. Create a key in the [console](https://app.vpndetection.io), then pass it in:
 
 ```zig
 var client = try vpndetection.Client.init(gpa, io, .{ .api_key = key });
@@ -71,7 +71,7 @@ const result = try client.lookup("45.83.91.1");
 defer result.deinit();
 
 std.debug.print("{}\n", .{result.value.is_vpn});                  // true
-std.debug.print("{}\n", .{result.value.is_hosting orelse false}); // true, with any key, a free one included
+std.debug.print("{}\n", .{result.value.is_hosting orelse false}); // true, on a paid plan
 std.debug.print("{s}\n", .{result.value.vpn.?.provider.?});       // nordvpn, on a paid plan
 ```
 
@@ -98,13 +98,13 @@ std.debug.print("{s}\n", .{acct.value.plan.key});        // max
 std.debug.print("{d}\n", .{acct.value.usage.requests});  // 580
 ```
 
-Usage counts against the anniversary of your subscription, not the calendar month and not the billing period, and it is the same number a lookup is gated on. `hard_limit` is `null` on an uncapped plan, which is not the same as zero.
+Usage counts against the anniversary of your subscription on a paid plan, not the calendar month and not the billing period, and against the UTC day on a trial key; it is the same number a lookup is gated on. `hard_limit` is `null` on an uncapped plan, which is not the same as zero.
 
 Both are yours to free, like everything else the client hands back. `myIpWith` and `myEntitlementWith` take this call's own retry budget and a `Diagnostics`.
 
 ### Batch lookup
 
-Look up many addresses at once. Bogons and cached answers are handled locally, and everything else goes to the batch endpoint in chunks of up to 1000 addresses, in parallel. The batch endpoint needs an API key, a free one included:
+Look up many addresses at once. Bogons and cached answers are handled locally, and everything else goes to the batch endpoint in chunks of up to 1000 addresses, in parallel. The batch endpoint needs a paid plan:
 
 ```zig
 var batch = try client.lookupBatch(&.{ "45.83.91.1", "8.8.8.8", "1.1.1.1" }, .{});
@@ -303,12 +303,12 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Without a key a lookup leaves out `is_hosting`, `is_cdn` and the four proxy flags, and a free key leaves out `vpn` and the detail behind each flag. Every field beyond `ip` and `is_vpn` is optional, because your key decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
+The Unlimited tier leaves out `is_hosting`, `is_cdn` and the four proxy flags, and of the detail behind each flag it answers only Tor's and relay's; a trial key's answer carries `trial_expired`, true once its day of full answers is spent. Every field beyond `ip` and `is_vpn` is optional, because your key decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
 
 ```zig
 const hosting = result.value.is_hosting orelse false; // when you only want the flag
-if (result.value.is_hosting == null) { ... }          // without a key: not in your plan
-if (result.value.vpn == null) { ... }                 // on a free key: not in your plan
+if (result.value.is_hosting == null) { ... }          // on the Unlimited tier: not in your plan
+if (result.value.trial_expired == true) { ... }      // a trial key's day of full answers is spent
 ```
 
 ## Other Libraries

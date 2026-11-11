@@ -3,9 +3,9 @@
 //! hosting servers, CDNs and relays.
 //!
 //! Start with `Client.init` and `Client.lookup`. No API key is needed: without
-//! one a lookup answers `ip`, `is_vpn`, the Tor and relay members, `location`
-//! and `asn`, with no daily or monthly cap, and a batch is refused as
-//! `error.Unauthorized`.
+//! one a lookup is on the Unlimited tier, answering `ip`, `is_vpn`, the Tor and
+//! relay members, `location` and `asn` with no daily or monthly cap. A batch
+//! needs a paid plan.
 //!
 //! ```
 //! var threaded: std.Io.Threaded = .init(gpa, .{});
