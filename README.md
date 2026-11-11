@@ -24,7 +24,7 @@ Requires Zig **0.16.0**, **0.17.0** or **0.17.1**. Zig is pre-1.0 and its standa
 
 ## Usage
 
-**No API key needed to start.** The Unlimited tier answers `ip`, `is_vpn`, Tor and relay detection, `location` and `asn`, with no daily or monthly cap, with a key or without one.
+**No API key needed to start.** Unlimited, the free plan, answers `ip`, `is_vpn`, Tor and relay detection, `location` and `asn`, with no daily or monthly cap, with a key or without one.
 
 ```zig
 const std = @import("std");
@@ -61,7 +61,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### With an API key
 
-Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, and the provider, confidence and last-seen detail behind each flag. The plans differ only in how many lookups they include, and a new account can try every field, 100 lookups a day. Create a key in the [console](https://app.vpndetection.io), then pass it in:
+Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, and the provider, confidence and last-seen detail behind each flag. The plans differ only in how many lookups they include, and a free account tries every field, 100 lookups a day. Create a key in the [console](https://app.vpndetection.io), then pass it in:
 
 ```zig
 var client = try vpndetection.Client.init(gpa, io, .{ .api_key = key });
@@ -98,7 +98,7 @@ std.debug.print("{s}\n", .{acct.value.plan.key});        // max
 std.debug.print("{d}\n", .{acct.value.usage.requests});  // 580
 ```
 
-Usage counts against the anniversary of your subscription on a paid plan, not the calendar month and not the billing period, and against the UTC day on a trial key; it is the same number a lookup is gated on. `hard_limit` is `null` on an uncapped plan, which is not the same as zero.
+Usage counts against the anniversary of your subscription on a paid plan, not the calendar month and not the billing period, and against the UTC day on the free plan; it is the same number a lookup is gated on. `hard_limit` is `null` on an uncapped plan, which is not the same as zero.
 
 Both are yours to free, like everything else the client hands back. `myIpWith` and `myEntitlementWith` take this call's own retry budget and a `Diagnostics`.
 
@@ -303,12 +303,12 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-The Unlimited tier leaves out `is_hosting`, `is_cdn` and the four proxy flags, and of the detail behind each flag it answers only Tor's and relay's; a trial key's answer carries `trial_expired`, true once its day of full answers is spent. Every field beyond `ip` and `is_vpn` is optional, because your key decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
+Unlimited leaves out `is_hosting`, `is_cdn` and the four proxy flags, and of the detail behind each flag it answers only Tor's and relay's; a free-plan key's answer carries `trial_expired`, true once its daily trial is spent. Every field beyond `ip` and `is_vpn` is optional, because your key decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
 
 ```zig
 const hosting = result.value.is_hosting orelse false; // when you only want the flag
-if (result.value.is_hosting == null) { ... }          // on the Unlimited tier: not in your plan
-if (result.value.trial_expired == true) { ... }      // a trial key's day of full answers is spent
+if (result.value.is_hosting == null) { ... }          // on Unlimited: not in your plan
+if (result.value.trial_expired == true) { ... }      // a free-plan key's daily trial is spent
 ```
 
 ## Other Libraries

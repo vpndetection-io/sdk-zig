@@ -80,13 +80,13 @@ test "each tier serves a superset of the tier below" {
     }
 }
 
-/// trial_expired marks a trial key's answers, and no other: it is not a field a
-/// tier serves.
+/// trial_expired marks a free-plan key's answers, and no other: it is not a
+/// field a tier serves.
 fn tierFields(fixture: staging.Fixture) usize {
     return fixture.fields() - @intFromBool(fixture.has("trial_expired"));
 }
 
-test "a trial key's answer is a paid one or Unlimited's, and says which" {
+test "a free-plan key's answer is a paid one or Unlimited's, and says which" {
     try Tier.trial.require();
     const gpa = std.testing.allocator;
     var fixture = try staging.answerFor(gpa, .trial);
@@ -101,7 +101,7 @@ test "a trial key's answer is a paid one or Unlimited's, and says which" {
     try std.testing.expectEqual(!expired, fixture.has("is_hosting"));
 }
 
-test "a trial key's batch of two is refused as a bad request, once" {
+test "a free-plan key's batch of two is refused as a bad request, once" {
     try Tier.trial.require();
     const gpa = std.testing.allocator;
     const rung = try staging.Rung.start(gpa, .trial, .{ .cache = null });
@@ -124,7 +124,7 @@ test "a trial key's batch of two is refused as a bad request, once" {
     try std.testing.expectEqualStrings("/batch", rung.proxy.seen()[0].path);
 }
 
-test "a trial key's batch of one is answered" {
+test "a free-plan key's batch of one is answered" {
     try Tier.trial.require();
     const gpa = std.testing.allocator;
     const rung = try staging.Rung.start(gpa, .trial, .{ .cache = null });
@@ -209,7 +209,7 @@ test "a bogon is answered without touching the network" {
     // Computed rather than served, so it carries every field whatever the plan.
     // `ip` and `is_vpn` are on every plan and so are not optionals at all,
     // which is why the loop only has anything to say about the other fifteen.
-    // `trial_expired` is the exception the other way: it marks a trial key's
+    // `trial_expired` is the exception the other way: it marks a free-plan key's
     // served answers, and a bogon is never served, so it is always null here.
     inline for (std.meta.fields(vpndetection.Answer)) |field| {
         const marker = comptime std.mem.eql(u8, field.name, "trial_expired");

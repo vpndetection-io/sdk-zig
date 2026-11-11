@@ -32,9 +32,9 @@ pub const CacheOptions = struct {
 };
 
 pub const Options = struct {
-    /// Without one a lookup is on the Unlimited tier: `ip`, `is_vpn`, the Tor
-    /// and relay members, `location` and `asn`, with no daily or monthly cap. A
-    /// batch needs a key on a paid plan.
+    /// Without one a lookup is on Unlimited, the free plan: `ip`, `is_vpn`, the
+    /// Tor and relay members, `location` and `asn`, with no daily or monthly
+    /// cap. A batch needs a key on a paid plan.
     api_key: ?[]const u8 = null,
     base_url: []const u8 = default_base_url,
     /// Null disables caching, so every lookup of a non-bogon address is served.
@@ -346,7 +346,7 @@ pub const Client = struct {
     ///
     /// Usage counts against the ALLOWANCE WINDOW - on a paid plan the
     /// anniversary of the subscription, not the calendar month and not the
-    /// billing period, and on a trial key the UTC day - and it is the same
+    /// billing period, and on the free plan the UTC day - and it is the same
     /// number a lookup is gated on.
     ///
     /// Deliberately NOT cached: the whole point is what has been spent, and a
@@ -383,8 +383,8 @@ pub const Client = struct {
     /// reports a per-entry failure with the status the single lookup would have
     /// answered, and a chunk that fails as a whole marks every address in it.
     /// The batch endpoint needs a paid plan: without a key every address sent
-    /// to it fails with `Unauthorized`, and a trial key's batch of two or more
-    /// with `BadRequest` (HTTP 402).
+    /// to it fails with `Unauthorized`, and a free-plan key's batch of two or
+    /// more with `BadRequest` (HTTP 402).
     pub fn lookupBatch(
         self: *Client,
         ips: []const []const u8,
