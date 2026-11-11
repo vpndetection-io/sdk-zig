@@ -4,7 +4,7 @@
 //!
 //! Start with `Client.init` and `Client.lookup`. No API key is needed: without
 //! one a lookup answers `ip`, `is_vpn`, the Tor and relay members, `location`
-//! and `asn`, up to 60 a minute from each address, and a batch is refused as
+//! and `asn`, with no daily or monthly cap, and a batch is refused as
 //! `error.Unauthorized`.
 //!
 //! ```

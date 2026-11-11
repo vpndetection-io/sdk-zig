@@ -33,8 +33,8 @@ pub const CacheOptions = struct {
 
 pub const Options = struct {
     /// Omit it to look up without one: a lookup then answers `ip`, `is_vpn`,
-    /// the Tor and relay members, `location` and `asn`, up to 60 a minute from
-    /// each address, and a batch is refused as unauthorized.
+    /// the Tor and relay members, `location` and `asn`, with no daily or monthly
+    /// cap, and a batch is refused as unauthorized.
     api_key: ?[]const u8 = null,
     base_url: []const u8 = default_base_url,
     /// Null disables caching, so every lookup of a non-bogon address is served.
