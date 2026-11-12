@@ -382,9 +382,10 @@ pub const Client = struct {
     /// value, so one bad entry cannot lose the rest of the answers: the API
     /// reports a per-entry failure with the status the single lookup would have
     /// answered, and a chunk that fails as a whole marks every address in it.
-    /// The batch endpoint needs a paid plan: without a key every address sent
-    /// to it fails with `Unauthorized`, and a free-plan key's batch of two or
-    /// more with `BadRequest` (HTTP 402).
+    /// The batch endpoint needs a paid plan: without a key every address in a
+    /// request of two or more fails with `Unauthorized`, and a free-plan
+    /// key's request of two or more with `BadRequest` (HTTP 402). A request
+    /// of one address is answered as its lookup would be.
     pub fn lookupBatch(
         self: *Client,
         ips: []const []const u8,
