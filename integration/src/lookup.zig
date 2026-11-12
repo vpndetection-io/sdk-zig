@@ -229,7 +229,8 @@ test "a batch without a key is refused once, and its bogon still answered" {
     const rung = try staging.Rung.start(gpa, .unauth, .{ .cache = null });
     defer rung.deinit();
 
-    var batch = try rung.client.lookupBatch(&.{ staging.probe, "10.0.0.1" }, .{});
+    // Two addresses on the wire: a keyless batch of one is answered as its lookup.
+    var batch = try rung.client.lookupBatch(&.{ staging.probe, "8.8.8.8", "10.0.0.1" }, .{});
     defer batch.deinit();
 
     switch (batch.get("10.0.0.1").?) {
