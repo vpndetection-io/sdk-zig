@@ -10,7 +10,7 @@ It tells you whether an IP address is a VPN, residential proxy, Tor node, relay 
 ## Getting Started
 
 ```bash
-zig fetch --save git+https://github.com/vpndetection-io/sdk-zig#v4.13.1
+zig fetch --save git+https://github.com/vpndetection-io/sdk-zig#v4.14.0
 ```
 
 Then add the module to whatever you are building, in `build.zig`:

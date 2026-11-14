@@ -2,6 +2,17 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.14.0 - 2026-11-14
+
+### Features
+
+- Re-pin the spec to 2026.11.14: is_bogon on every answer, and provider_name beside each provider ([`efc3347`](https://github.com/vpndetection-io/sdk-zig/commit/efc334797343575ac3925fbddbcf2d6011bd864b))
+
+### Fixes
+
+- Re-pin the spec to 2026.11.12: plainer words on the 401 and the batch rate limit ([`2932897`](https://github.com/vpndetection-io/sdk-zig/commit/29328979deec70d3ed32a9fece03b356cef72ff3))
+- Say that a batch request of one address is answered as its lookup ([`f4a3bfb`](https://github.com/vpndetection-io/sdk-zig/commit/f4a3bfb790c296fbce0e7bff3cf652edc9a4bb6b))
+
 ## 4.13.1 - 2026-11-11
 
 ### Fixes
