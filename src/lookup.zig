@@ -26,6 +26,7 @@ const Allocator = std.mem.Allocator;
 /// spec change is picked up by editing this struct.
 pub const Answer = struct {
     ip: []const u8,
+    is_bogon: ?bool = null,
     is_vpn: bool,
     is_hosting: ?bool = null,
     is_relay: ?bool = null,
@@ -60,6 +61,8 @@ pub const Answer = struct {
 /// question for every consumer.
 pub const VpnDetail = struct {
     provider: ?[]const u8 = null,
+    /// The name the provider catalog gives `provider`, the ID to key on.
+    provider_name: ?[]const u8 = null,
     last_seen: ?[]const u8 = null,
     confidence: ?[]const u8 = null,
     /// Deprecated: no plan is answered with it since 2026-10-20, so it is
@@ -70,6 +73,7 @@ pub const VpnDetail = struct {
 /// The shared detail shape for the hosting, relay, tor and cdn datasets.
 pub const ClassDetail = struct {
     provider: ?[]const u8 = null,
+    provider_name: ?[]const u8 = null,
     confidence: ?[]const u8 = null,
     last_seen: ?[]const u8 = null,
 };
@@ -78,6 +82,7 @@ pub const ClassDetail = struct {
 /// families, measured over a rolling 90 day window.
 pub const ProxyDetail = struct {
     provider: ?[]const u8 = null,
+    provider_name: ?[]const u8 = null,
     first_seen: ?[]const u8 = null,
     last_seen: ?[]const u8 = null,
     hits: ?i64 = null,
@@ -169,8 +174,9 @@ pub const Lookup = struct {
     /// The untouched response body, for a field this library does not model
     /// yet. Empty for a bogon, which was computed rather than served.
     raw: []const u8,
-    /// True when this answer was computed locally rather than served, which
-    /// happens for a bogon and only for a bogon.
+    /// True for reserved space (private, loopback, documentation and the
+    /// like), which this library answers locally without a request. A served
+    /// answer carries the API's own `is_bogon`, and this reads it.
     is_bogon: bool,
     arena: *std.heap.ArenaAllocator,
 
@@ -195,6 +201,7 @@ pub fn parseServed(gpa: Allocator, body: []const u8) ParseError!Lookup {
         // every consumer breaks the day the API grows one.
         .ignore_unknown_fields = true,
     }) catch return error.Malformed;
+    lookup.is_bogon = lookup.value.is_bogon orelse false;
     return lookup;
 }
 
@@ -211,6 +218,7 @@ pub fn bogonLookup(gpa: Allocator, ip: []const u8) Allocator.Error!Lookup {
     lookup.is_bogon = true;
     lookup.value = .{
         .ip = try lookup.arena.allocator().dupe(u8, ip),
+        .is_bogon = true,
         .is_vpn = false,
         .is_hosting = false,
         .is_relay = false,
@@ -245,6 +253,21 @@ fn empty(gpa: Allocator) Allocator.Error!Lookup {
         .is_bogon = false,
         .arena = arena,
     };
+}
+
+test "a served is_bogon reaches the lookup" {
+    const flagged = try parseServed(std.testing.allocator, "{\"ip\":\"8.8.8.8\",\"is_bogon\":true,\"is_vpn\":false}");
+    defer flagged.deinit();
+    try std.testing.expect(flagged.is_bogon);
+    const served = try parseServed(std.testing.allocator, "{\"ip\":\"8.8.4.4\",\"is_bogon\":false,\"is_vpn\":false}");
+    defer served.deinit();
+    try std.testing.expect(!served.is_bogon);
+    const named = try parseServed(
+        std.testing.allocator,
+        "{\"ip\":\"8.8.8.8\",\"is_vpn\":true,\"vpn\":{\"provider\":\"nordvpn\",\"provider_name\":\"NordVPN\"}}",
+    );
+    defer named.deinit();
+    try std.testing.expectEqualStrings("NordVPN", named.value.vpn.?.provider_name.?);
 }
 
 test "an absent flag is null and a served false flag is false" {
