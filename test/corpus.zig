@@ -23,6 +23,7 @@ pub const Corpus = struct {
     batch: []const BatchCase,
     bogons: Bogons,
     oauth: Oauth,
+    vocabulary: Vocabulary,
 
     pub fn batchCase(self: Corpus, name: []const u8) BatchCase {
         for (self.batch) |case| {
@@ -33,6 +34,41 @@ pub const Corpus = struct {
         std.debug.panic("the corpus has no batch case named {s}", .{name});
     }
 };
+
+/// A closed vocabulary in an answer is the API's to extend: each case serves an
+/// answer carrying a value no published list holds, which must come back as
+/// served. Each `expect` key is a dotted path of wire names through the answer,
+/// a number indexing a list.
+pub const Vocabulary = struct {
+    cases: []const VocabularyCase,
+};
+
+pub const VocabularyCase = struct {
+    name: []const u8,
+    why: ?[]const u8 = null,
+    call: []const u8,
+    answer: std.json.Value,
+    expect: std.json.ArrayHashMap(std.json.Value),
+};
+
+/// The member at `path` (`databases.0.standing`) in `value`, or null when the
+/// path leads nowhere.
+pub fn at(value: std.json.Value, path: []const u8) ?std.json.Value {
+    var current = value;
+    var segments = std.mem.splitScalar(u8, path, '.');
+    while (segments.next()) |segment| {
+        switch (current) {
+            .object => |object| current = object.get(segment) orelse return null,
+            .array => |array| {
+                const index = std.fmt.parseInt(usize, segment, 10) catch return null;
+                if (index >= array.items.len) return null;
+                current = array.items[index];
+            },
+            else => return null,
+        }
+    }
+    return current;
+}
 
 pub const BogonCase = struct {
     ip: []const u8,

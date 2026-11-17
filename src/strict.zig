@@ -55,6 +55,7 @@ const rules = [_]Entry{
     .{ .T = entitlement.EntitlementApikey, .name = "expires", .form = .date_time },
     .{ .T = entitlement.EntitlementUsage, .name = "window_start", .form = .date_time },
     .{ .T = entitlement.EntitlementUsage, .name = "window_end", .form = .date_time },
+    .{ .T = entitlement.EntitlementPlan, .name = "name", .required = true },
     .{ .T = database.Database, .name = "summary", .required = true },
     .{ .T = database.Database, .name = "license_type", .required = true },
     .{ .T = database.Database, .name = "starts", .required = true, .form = .date_time },

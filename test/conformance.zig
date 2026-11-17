@@ -390,6 +390,59 @@ test "caching can be turned off" {
     try std.testing.expectEqual(2, harness.stub.callCount());
 }
 
+// A value the API adds to a closed vocabulary must not break a release already
+// installed, so each case's answer reads, and the typed result, written back
+// out, carries every expected member as served.
+test "a vocabulary value no published list holds comes back as served" {
+    const gpa = std.testing.allocator;
+    const data = try corpus.load(gpa);
+    defer data.deinit();
+
+    try std.testing.expect(data.value.vocabulary.cases.len > 0);
+    for (data.value.vocabulary.cases) |case| {
+        errdefer std.debug.print("vocabulary case {s}\n", .{case.name});
+        const harness = try Harness.start(gpa);
+        defer harness.deinit();
+        const arena = harness.stub.arena.allocator();
+
+        const path = if (std.mem.eql(u8, case.call, "myEntitlement"))
+            "/api/v1/entitlement"
+        else if (std.mem.eql(u8, case.call, "listDatabases"))
+            "/api/v1/database/list"
+        else if (std.mem.eql(u8, case.call, "listDownloads"))
+            "/api/v1/database/downloads"
+        else
+            std.debug.panic("vocabulary case {s} calls {s}, which this suite does not know", .{ case.name, case.call });
+        try harness.stub.route(path, .ok(try corpus.json(arena, case.answer)));
+
+        var client = try harness.client(.{});
+        defer client.deinit();
+        const database = client.database();
+
+        const written = if (std.mem.eql(u8, case.call, "myEntitlement")) blk: {
+            const answer = try client.myEntitlement();
+            defer answer.deinit();
+            break :blk try std.fmt.allocPrint(arena, "{f}", .{std.json.fmt(answer.value, .{})});
+        } else if (std.mem.eql(u8, case.call, "listDatabases")) blk: {
+            const answer = try database.list(.{});
+            defer answer.deinit();
+            break :blk try std.fmt.allocPrint(arena, "{f}", .{std.json.fmt(.{ .databases = answer.value }, .{})});
+        } else blk: {
+            const answer = try database.downloads(null, .{});
+            defer answer.deinit();
+            break :blk try std.fmt.allocPrint(arena, "{f}", .{std.json.fmt(.{ .downloads = answer.value }, .{})});
+        };
+        const result = try std.json.parseFromSliceLeaky(std.json.Value, arena, written, .{});
+
+        for (case.expect.map.keys(), case.expect.map.values()) |key, want| {
+            const expected = try corpus.json(arena, want);
+            errdefer std.debug.print("  {s} should be {s}\n", .{ key, expected });
+            const got = corpus.at(result, key) orelse return error.TestExpectedEqual;
+            try std.testing.expectEqualStrings(expected, try corpus.json(arena, got));
+        }
+    }
+}
+
 test "every generated range is reachable through the predicate" {
     const data = try corpus.load(std.testing.allocator);
     defer data.deinit();

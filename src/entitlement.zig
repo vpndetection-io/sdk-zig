@@ -30,8 +30,15 @@ pub const EntitlementApikey = struct {
 /// `Database.license_type` does: a tier added to the API after this release
 /// would otherwise fail the whole response to parse.
 pub const EntitlementPlan = struct {
-    /// The plan the organization is on, e.g. `max`.
+    /// The plan the organization is on, as an identifier that is never renamed
+    /// or reused: `free` for the free plan, or a paid plan's key, e.g. `max`.
+    /// Compare against this, and show `name`.
     key: []const u8,
+    /// The plan's name as the site and console show it: `Unlimited` for the
+    /// free plan. Show this rather than a name built from `key`, since a plan's
+    /// name can change and its key never does. Every answer carries it; the
+    /// default only lets you build a plan by hand.
+    name: []const u8 = "",
     /// The field tier, which decides how much of a lookup answer comes back:
     /// `free`, `starter`, `scale` or `max`.
     tier: []const u8,

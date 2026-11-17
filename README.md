@@ -94,7 +94,8 @@ Same answer `lookup` would give for that address, and the same cost against your
 const acct = try client.myEntitlement();
 defer acct.deinit();
 
-std.debug.print("{s}\n", .{acct.value.plan.key});        // max
+std.debug.print("{s}\n", .{acct.value.plan.name});       // Max, what to show
+std.debug.print("{s}\n", .{acct.value.plan.key});        // max, what to compare against
 std.debug.print("{d}\n", .{acct.value.usage.requests});  // 580
 ```
 

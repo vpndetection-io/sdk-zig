@@ -18,7 +18,7 @@ info:
     email: support@vpndetection.io
     url: https://vpndetection.io
   termsOfService: https://vpndetection.io/terms
-  version: 2026.11.14
+  version: 2026.11.16
 servers:
   - url: https://api.vpndetection.io
     description: Production
@@ -297,9 +297,10 @@ paths:
         '403':
           description: |
             The key restricts which source addresses may use it and this
-            request came from none of them, or the key was sent over plain
-            HTTP, where anyone on the network path could read it. Rotate a key
-            that was.
+            request came from none of them, or the key lacks the `ip.lookup`
+            scope (IP lookup, in the console's key settings), or the key was
+            sent over plain HTTP, where anyone on the network path could read
+            it. Rotate a key that was.
           content:
             application/json:
               schema:
@@ -308,6 +309,9 @@ paths:
                 sourceNotAllowed:
                   value:
                     error: source address not allowed for this API key
+                scopeMissing:
+                  value:
+                    error: API key lacks the ip.lookup scope; add IP lookup to it in the console
                 plainHttp:
                   value:
                     error: API key sent over plain HTTP; use https://
@@ -428,9 +432,10 @@ paths:
         '403':
           description: |
             The key restricts which source addresses may use it and this
-            request came from none of them, or the key was sent over plain
-            HTTP, where anyone on the network path could read it. Rotate a key
-            that was.
+            request came from none of them, or the key lacks the `ip.lookup`
+            scope (IP lookup, in the console's key settings), or the key was
+            sent over plain HTTP, where anyone on the network path could read
+            it. Rotate a key that was.
           content:
             application/json:
               schema:
@@ -439,6 +444,9 @@ paths:
                 sourceNotAllowed:
                   value:
                     error: source address not allowed for this API key
+                scopeMissing:
+                  value:
+                    error: API key lacks the ip.lookup scope; add IP lookup to it in the console
                 plainHttp:
                   value:
                     error: API key sent over plain HTTP; use https://
@@ -653,9 +661,10 @@ paths:
         '403':
           description: |
             The key restricts which source addresses may use it and this
-            request came from none of them, or the key was sent over plain
-            HTTP, where anyone on the network path could read it. Rotate a key
-            that was.
+            request came from none of them, or the key lacks the `ip.lookup`
+            scope (IP lookup, in the console's key settings), or the key was
+            sent over plain HTTP, where anyone on the network path could read
+            it. Rotate a key that was.
           content:
             application/json:
               schema:
@@ -664,6 +673,9 @@ paths:
                 sourceNotAllowed:
                   value:
                     error: source address not allowed for this API key
+                scopeMissing:
+                  value:
+                    error: API key lacks the ip.lookup scope; add IP lookup to it in the console
                 plainHttp:
                   value:
                     error: API key sent over plain HTTP; use https://
@@ -970,6 +982,7 @@ paths:
                       allowed_cidrs: []
                     plan:
                       key: max
+                      name: Max
                       tier: max
                     usage:
                       requests: 580
@@ -991,6 +1004,7 @@ paths:
                       allowed_cidrs: []
                     plan:
                       key: free
+                      name: Unlimited
                       tier: free
                     usage:
                       requests: 37
@@ -2000,6 +2014,7 @@ components:
       properties:
         asn:
           type: integer
+          format: int64
           description: The AS number, 0 when no announcement covers the address.
           example: 9009
         name:
@@ -2368,15 +2383,24 @@ components:
       type: object
       required:
         - key
+        - name
         - tier
       properties:
         key:
           type: string
           description: |
-            The plan the organization is on: `free` for the free plan,
-            Unlimited, or a paid plan's key. On `free`, usage counts the
+            The plan the organization is on, as an identifier that is never
+            renamed or reused: `free` for the free plan, or a paid plan's key.
+            Compare against it and show `name`. On `free`, usage counts the
             day's lookups answered with every field, its daily trial.
           example: max
+        name:
+          type: string
+          description: |
+            The plan's name, as the site and console show it: `Unlimited` for
+            the free plan. Show this rather than a name built from `key`: a
+            plan's name can change, and its key never does.
+          example: Max
         tier:
           type: string
           enum:
@@ -2386,7 +2410,8 @@ components:
             - max
           description: |
             The field tier, which decides how much of a lookup answer comes
-            back; `free` is the free plan's. What each tier includes is documented
+            back; `free` is the free plan's. This list never gains a value: a
+            new plan reports one of these. What each tier includes is documented
             on the lookup endpoint rather than repeated here, so there is one
             place it can be wrong.
     EntitlementUsage:

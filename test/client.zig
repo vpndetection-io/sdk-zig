@@ -977,7 +977,7 @@ const entitlement_body =
     \\    "expires": null,
     \\    "allowed_cidrs": []
     \\  },
-    \\  "plan": {"key": "max", "tier": "max"},
+    \\  "plan": {"key": "max", "name": "Max", "tier": "max"},
     \\  "usage": {
     \\    "requests": 580,
     \\    "quota": 5000000,
@@ -1036,6 +1036,7 @@ test "myEntitlement reports the plan and the usage" {
     defer entitlement.deinit();
 
     try std.testing.expectEqualStrings("max", entitlement.value.plan.key);
+    try std.testing.expectEqualStrings("Max", entitlement.value.plan.name);
     try std.testing.expectEqualStrings("max", entitlement.value.plan.tier);
     try std.testing.expectEqual(@as(i64, 580), entitlement.value.usage.requests);
     try std.testing.expectEqual(@as(i64, 5_000_000), entitlement.value.usage.quota);
@@ -1090,7 +1091,7 @@ const lookup_ok =
     \\"asn":{"asn":5,"name":"n","domain":"d","type":"t","prefix":"p"}}
 ;
 const entitlement_ok =
-    \\{"org_id":"o","apikey":{"id":"k","expires":null,"allowed_cidrs":[]},"plan":{"key":"max","tier":"max"},
+    \\{"org_id":"o","apikey":{"id":"k","expires":null,"allowed_cidrs":[]},"plan":{"key":"max","name":"Max","tier":"max"},
     \\"usage":{"requests":1,"quota":10,"hard_limit":null,"window_start":"2026-10-01T00:00:00Z","window_end":"2026-11-01T00:00:00.5+02:00"}}
 ;
 const list_ok =
@@ -1135,6 +1136,9 @@ const wrong_answers = [_]Case{
     .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"window_start\":\"2026-10-01T00:00:00Z\"", .to = "\"window_start\":\"2026-02-30T00:00:00Z\"" },
     .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"window_start\":\"2026-10-01T00:00:00Z\"", .to = "\"window_start\":\"2026-10-01\"" },
     .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"expires\":null", .to = "\"expires\":\"monday\"" },
+    .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"name\":\"Max\",", .to = "" },
+    .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"name\":\"Max\"", .to = "\"name\":null" },
+    .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"name\":\"Max\"", .to = "\"name\":7" },
     .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"version\":1", .to = "\"version\":\"1\"" },
     .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"version\":1", .to = "\"version\":\"x\"" },
     .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"bytes\":760", .to = "\"bytes\":\"760\"" },
