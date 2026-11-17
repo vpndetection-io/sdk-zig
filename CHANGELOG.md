@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.15.0 - 2026-11-17
+
+### Features
+
+- Read the plan's name, and pin vocabulary values handed back as served ([`e9cf935`](https://github.com/vpndetection-io/sdk-zig/commit/e9cf935b68f2100c3d44e6dfd4a3a16f149cc701))
+
 ## 4.14.0 - 2026-11-14
 
 ### Features
