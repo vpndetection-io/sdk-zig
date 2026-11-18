@@ -304,12 +304,13 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Unlimited leaves out `is_hosting`, `is_cdn` and the four proxy flags, and of the detail behind each flag it answers only Tor's and relay's; a free-plan key's answer carries `trial_expired`, true once its daily trial is spent. Every field beyond `ip` and `is_vpn` is optional, because your key decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
+Unlimited leaves out `is_hosting`, `is_cdn` and the four proxy flags, and of the detail behind each flag it answers only Tor's and relay's; a free-plan key's answer carries `trial_expired`, true once its daily trial is spent, and a paid key's carries `cap_reached`, true once its organization's overage cap is reached and the answer has Unlimited's. Every field beyond `ip` and `is_vpn` is optional, because your key decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
 
 ```zig
 const hosting = result.value.is_hosting orelse false; // when you only want the flag
 if (result.value.is_hosting == null) { ... }          // on Unlimited: not in your plan
 if (result.value.trial_expired == true) { ... }      // a free-plan key's daily trial is spent
+if (result.value.cap_reached == true) { ... }        // a paid key past its overage cap
 ```
 
 ## Other Libraries

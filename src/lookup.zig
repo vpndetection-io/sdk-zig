@@ -54,6 +54,10 @@ pub const Answer = struct {
     /// daily trial lasts (every field for the first 100 lookups each UTC day),
     /// true once the answer has Unlimited's.
     trial_expired: ?bool = null,
+    /// On answers to a key on a paid plan only: false while the answer has every
+    /// field, true once its organization's overage cap is reached and the answer
+    /// has Unlimited's. Lookups answered past the cap are not billed.
+    cap_reached: ?bool = null,
 };
 
 /// Dates arrive as `YYYY-MM-DD` strings and stay strings: Zig has no date type
