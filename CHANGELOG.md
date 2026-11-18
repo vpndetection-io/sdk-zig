@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.16.0 - 2026-11-18
+
+### Features
+
+- Read cap_reached past a paid plan's overage cap, and re-pin the spec ([`8e53c6d`](https://github.com/vpndetection-io/sdk-zig/commit/8e53c6db58d2f5cdb8a2f785ca5a5cbe3bdbeec5))
+
 ## 4.15.0 - 2026-11-17
 
 ### Features
