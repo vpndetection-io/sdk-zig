@@ -209,10 +209,12 @@ test "a bogon is answered without touching the network" {
     // Computed rather than served, so it carries every field whatever the plan.
     // `ip` and `is_vpn` are on every plan and so are not optionals at all,
     // which is why the loop only has anything to say about the other fifteen.
-    // `trial_expired` is the exception the other way: it marks a free-plan key's
-    // served answers, and a bogon is never served, so it is always null here.
+    // `trial_expired` and `cap_reached` are the exceptions the other way: they
+    // mark a free-plan key's and a paid key's served answers, and a bogon is
+    // never served, so both are always null here.
     inline for (std.meta.fields(vpndetection.Answer)) |field| {
-        const marker = comptime std.mem.eql(u8, field.name, "trial_expired");
+        const marker = comptime std.mem.eql(u8, field.name, "trial_expired") or
+            std.mem.eql(u8, field.name, "cap_reached");
         if (@typeInfo(field.type) == .optional and !marker and @field(result.value, field.name) == null) {
             std.debug.print("{s} must be present on a bogon\n", .{field.name});
             return error.TestExpectedEqual;
