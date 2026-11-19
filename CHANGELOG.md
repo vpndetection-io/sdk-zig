@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.16.1 - 2026-11-19
+
+### Fixes
+
+- Re-pin the spec to 2026.11.18: a key over plain HTTP is refused ([`0559b50`](https://github.com/vpndetection-io/sdk-zig/commit/0559b5075c48b832aa34497610aa26f08169ead2))
+
 ## 4.16.0 - 2026-11-18
 
 ### Features
