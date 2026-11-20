@@ -96,8 +96,9 @@ test "a free-plan key's answer is a paid one or Unlimited's, and says which" {
         .bool => |value| value,
         else => return error.TestExpectedEqual,
     };
-    // The organization's first 100 lookups of the UTC day are answered in full,
-    // and the rest as Unlimited's: which half a run sees depends on the day.
+    // The organization's trial of every field is answered in full, and the
+    // lookups past it as Unlimited's: which half a run sees depends on how much
+    // of the trial the other runs have used.
     try std.testing.expectEqual(!expired, fixture.has("is_hosting"));
 }
 

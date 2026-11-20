@@ -132,6 +132,39 @@ pub fn assertShape(fixture: Fixture) !void {
     inline for (.{ "resproxy", "dcproxy", "mobproxy" }) |name| {
         try assertProxy(name, @field(answer, name), @field(answer, "is_" ++ name));
     }
+    inline for (.{ "carrier", "satellite", "ssh", "smtp", "dns_resolver", "bittorrent" }) |name| {
+        try assertEveryKey(name, @field(answer, name), @field(answer, "is_" ++ name));
+    }
+    if (answer.web) |rows| {
+        // A row is typed whole, so one missing a documented key fails to parse.
+        try std.testing.expect(answer.is_web != null);
+        if (rows.len == 0) {
+            try std.testing.expectEqual(@as(?bool, false), answer.is_web);
+        }
+    }
+    // An object with no flag above it: where the plan answers it, every key.
+    inline for (.{ "company", "abuse" }) |name| {
+        if (@field(answer, name)) |value| {
+            inline for (comptime std.meta.fieldNames(@TypeOf(value))) |key| {
+                if (comptime @typeInfo(@FieldType(@TypeOf(value), key)) == .optional) {
+                    try expectPresent(name, key, @field(value, key));
+                }
+            }
+        }
+    }
+}
+
+/// A detail object whose every key is present when it is populated.
+fn assertEveryKey(comptime name: []const u8, detail: anytype, flag: ?bool) !void {
+    const value = detail orelse return;
+    try std.testing.expect(flag != null);
+    if (isEmpty(value)) {
+        try std.testing.expectEqual(@as(?bool, false), flag);
+        return;
+    }
+    inline for (comptime std.meta.fieldNames(@TypeOf(value))) |key| {
+        try expectPresent(name, key, @field(value, key));
+    }
 }
 
 fn assertVpn(detail: ?vpndetection.VpnDetail) !void {
