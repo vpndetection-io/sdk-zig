@@ -101,10 +101,15 @@ test "a bogon is answered locally in the widest shape" {
     }
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
+    // Every member is checked before failing, so one run names each it got wrong.
+    var wrong: ?anyerror = null;
     const expected = try corpus.members(arena.allocator(), .bogon);
     for (expected.keys(), expected.values()) |name, want| {
-        try corpus.expectMember(arena.allocator(), result.value, name, want);
+        corpus.expectMember(arena.allocator(), result.value, name, want) catch |err| {
+            wrong = err;
+        };
     }
+    if (wrong) |err| return err;
     try std.testing.expectEqual(0, harness.stub.callCount());
 }
 
@@ -115,6 +120,9 @@ test "a lookup preserves absent versus false across every plan shape" {
 
     var arena: std.heap.ArenaAllocator = .init(gpa);
     defer arena.deinit();
+    // Every case's members are checked before failing, so one run names each
+    // member it got wrong.
+    var wrong: ?anyerror = null;
     for (data.value.lookup, 0..) |case, index| {
         const harness = try Harness.start(gpa);
         defer harness.deinit();
@@ -161,10 +169,11 @@ test "a lookup preserves absent versus false across every plan shape" {
         for (expected.keys(), expected.values()) |name, want| {
             corpus.expectMember(arena.allocator(), result.value, name, want) catch |err| {
                 std.debug.print("{s}: {s}\n", .{ case.name, name });
-                return err;
+                wrong = err;
             };
         }
     }
+    if (wrong) |err| return err;
 }
 
 test "a 429 is classified by Retry-After, not by its status" {
