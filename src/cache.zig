@@ -216,9 +216,21 @@ pub const Cache = struct {
         self.store(io, key, body);
     }
 
+    /// The longest a spent trial's or a reached cap's answer is held.
+    pub const reduced_ttl: Io.Duration = .fromSeconds(60);
+
+    /// How long `body` stays: the time to live, or at most a minute for an answer
+    /// marked `trial_expired` or `cap_reached`, which changes as soon as the
+    /// trial is renewed or the cap raised. Still cached, so a busy process past
+    /// its trial does not send every repeat of an address to the API.
+    fn lifeOf(self: *const Cache, body: []const u8) Io.Duration {
+        if (!isReduced(self.gpa, body)) return self.ttl;
+        return if (self.ttl.nanoseconds < reduced_ttl.nanoseconds) self.ttl else reduced_ttl;
+    }
+
     /// `put`, for a caller that holds the lock.
     fn store(self: *Cache, io: Io, key: []const u8, body: []const u8) void {
-        const expires = Io.Clock.awake.now(io).addDuration(self.ttl);
+        const expires = Io.Clock.awake.now(io).addDuration(self.lifeOf(body));
         if (self.entries.get(key)) |existing| {
             const fresh = self.gpa.dupe(u8, body) catch return;
             self.gpa.free(existing.body);
@@ -263,6 +275,55 @@ pub const Cache = struct {
         self.gpa.destroy(entry);
     }
 };
+
+/// Whether a served body is a spent trial's or a reached cap's answer. Only an
+/// answer already read reaches the cache, so one this cannot read is held as
+/// any other, for the time to live.
+fn isReduced(gpa: Allocator, body: []const u8) bool {
+    const Flags = struct { trial_expired: ?bool = null, cap_reached: ?bool = null };
+    const parsed = std.json.parseFromSlice(Flags, gpa, body, .{ .ignore_unknown_fields = true }) catch return false;
+    defer parsed.deinit();
+    return (parsed.value.trial_expired orelse false) or (parsed.value.cap_reached orelse false);
+}
+
+test "a spent trial's or a reached cap's answer stays a minute at most" {
+    const gpa = std.testing.allocator;
+    var threaded: Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const Case = struct { body: []const u8, ttl_s: i64, want_s: i64 };
+    const cases = [_]Case{
+        .{ .body = "{\"ip\":\"45.83.91.1\",\"is_vpn\":false}", .ttl_s = 3600, .want_s = 3600 },
+        .{ .body = "{\"ip\":\"45.83.91.2\",\"is_vpn\":false,\"trial_expired\":false,\"cap_reached\":false}", .ttl_s = 3600, .want_s = 3600 },
+        .{ .body = "{\"ip\":\"45.83.91.3\",\"is_vpn\":false,\"trial_expired\":true}", .ttl_s = 3600, .want_s = 60 },
+        .{ .body = "{\"ip\":\"45.83.91.4\",\"is_vpn\":false,\"cap_reached\":true}", .ttl_s = 3600, .want_s = 60 },
+        .{ .body = "{\"ip\":\"45.83.91.3\",\"is_vpn\":false,\"trial_expired\":true}", .ttl_s = 5, .want_s = 5 },
+        .{ .body = "{\"ip\":\"45.83.91.4\",\"is_vpn\":false,\"cap_reached\":true}", .ttl_s = 5, .want_s = 5 },
+        .{ .body = "{\"ip\":\"45.83.91.1\",\"is_vpn\":false}", .ttl_s = 5, .want_s = 5 },
+    };
+    for (cases) |case| {
+        for ([_]bool{ false, true }) |landed| {
+            var cache: Cache = .init(gpa, 10, .fromSeconds(case.ttl_s));
+            defer cache.deinit();
+
+            const before = Io.Clock.awake.now(io);
+            if (landed) {
+                // What a lookup and a batch entry both do: lead a flight and land it.
+                const claim = try cache.claim(io, "k", gpa);
+                cache.land(io, "k", claim.lead, .{ .served = case.body });
+            } else {
+                cache.put(io, "k", case.body);
+            }
+            const after = Io.Clock.awake.now(io);
+
+            const want: Io.Duration = .fromSeconds(case.want_s);
+            const expires = cache.entries.get("k").?.expires;
+            try std.testing.expect(expires.nanoseconds >= before.addDuration(want).nanoseconds);
+            try std.testing.expect(expires.nanoseconds <= after.addDuration(want).nanoseconds);
+        }
+    }
+}
 
 test "an entry survives until its ttl and is then a miss" {
     const gpa = std.testing.allocator;

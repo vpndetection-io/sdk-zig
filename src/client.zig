@@ -27,7 +27,8 @@ const batch_max: usize = 1000;
 pub const CacheOptions = struct {
     /// Maximum number of addresses held.
     max_entries: usize = 10_000,
-    /// How long an answer stays fresh.
+    /// How long an answer stays fresh. An answer marked `trial_expired` or
+    /// `cap_reached` stays a minute at most.
     ttl: Io.Duration = .fromSeconds(60 * 60),
 };
 
