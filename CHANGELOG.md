@@ -2,6 +2,17 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.17.0 - 2026-11-20
+
+### Features
+
+- Read the network, service, company and abuse members of a paid answer ([`abfe424`](https://github.com/vpndetection-io/sdk-zig/commit/abfe42415750c0b61945e67dab5942969453f632))
+
+### Fixes
+
+- Cache a spent trial's or a reached cap's answer for a minute at most ([`49c120f`](https://github.com/vpndetection-io/sdk-zig/commit/49c120fe80529232bcae2c34b27a790bfe1d55a5))
+- Describe the free plan's usage as its trial, with no period ([`09eaf6d`](https://github.com/vpndetection-io/sdk-zig/commit/09eaf6d077601aded51f4e4f333383d4384d7913))
+
 ## 4.16.1 - 2026-11-19
 
 ### Fixes
