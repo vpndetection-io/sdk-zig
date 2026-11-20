@@ -347,8 +347,8 @@ pub const Client = struct {
     ///
     /// Usage counts against the ALLOWANCE WINDOW - on a paid plan the
     /// anniversary of the subscription, not the calendar month and not the
-    /// billing period, and on the free plan the UTC day - and it is the same
-    /// number a lookup is gated on.
+    /// billing period, and on the free plan its trial of every field - and it
+    /// is the same number a lookup is gated on.
     ///
     /// Deliberately NOT cached: the whole point is what has been spent, and a
     /// cached answer is a wrong one within seconds of the next request.
