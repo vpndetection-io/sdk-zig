@@ -36,6 +36,16 @@ pub const Answer = struct {
     is_dcproxy: ?bool = null,
     is_mobproxy: ?bool = null,
     is_pubproxy: ?bool = null,
+    /// Announced from many places at once. Every answer carries it, with or
+    /// without a key.
+    is_anycast: ?bool = null,
+    is_carrier: ?bool = null,
+    is_satellite: ?bool = null,
+    is_ssh: ?bool = null,
+    is_smtp: ?bool = null,
+    is_web: ?bool = null,
+    is_dns_resolver: ?bool = null,
+    is_bittorrent: ?bool = null,
     vpn: ?VpnDetail = null,
     hosting: ?ClassDetail = null,
     relay: ?ClassDetail = null,
@@ -45,14 +55,28 @@ pub const Answer = struct {
     dcproxy: ?ProxyDetail = null,
     mobproxy: ?ProxyDetail = null,
     pubproxy: ?PubproxyDetail = null,
+    carrier: ?CarrierDetail = null,
+    satellite: ?SatelliteDetail = null,
+    ssh: ?SshDetail = null,
+    smtp: ?SmtpDetail = null,
+    /// A row per port a web server answered on; empty when `is_web` is false.
+    web: ?[]const WebDetail = null,
+    dns_resolver: ?DnsResolverDetail = null,
+    bittorrent: ?BitTorrentDetail = null,
     /// Where the address is. Every answer carries it, with or without a key.
     location: ?Location = null,
     /// The AS announcing the address. Every answer carries it, with or without
     /// a key.
     asn: ?Asn = null,
+    /// Who uses the address, on a paid plan.
+    company: ?Company = null,
+    /// The name the address's reverse DNS (PTR) record points to, empty when it
+    /// has none. Every answer carries it, with or without a key.
+    hostname: ?[]const u8 = null,
+    /// Where to report abuse from the address, on a paid plan.
+    abuse: ?AbuseContact = null,
     /// On answers to a key on the free plan only: false while its organization's
-    /// daily trial lasts (every field for the first 100 lookups each UTC day),
-    /// true once the answer has Unlimited's.
+    /// trial of every field lasts, true once the answer has Unlimited's.
     trial_expired: ?bool = null,
     /// On answers to a key on a paid plan only: false while the answer has every
     /// field, true once its organization's overage cap is reached and the answer
@@ -112,9 +136,93 @@ pub const PubproxyDetail = struct {
     last_usable: ?[]const u8 = null,
 };
 
-/// Where the address is, to the country. Every member is present whenever the
-/// object is, an empty string where it is not known, so none has a default and
-/// an answer missing one fails to parse.
+/// The mobile network whose address space holds the address.
+pub const CarrierDetail = struct {
+    name: ?[]const u8 = null,
+    mcc: ?[]const u8 = null,
+    mnc: ?[]const u8 = null,
+    country: ?[]const u8 = null,
+    confidence: ?[]const u8 = null,
+};
+
+/// The satellite operator whose address space holds the address.
+pub const SatelliteDetail = struct {
+    provider: ?[]const u8 = null,
+    provider_name: ?[]const u8 = null,
+    orbit: ?[]const u8 = null,
+    segment: ?[]const u8 = null,
+    country: ?[]const u8 = null,
+    asn: ?i64 = null,
+    confidence: ?[]const u8 = null,
+};
+
+/// The SSH server that answered at the address.
+pub const SshDetail = struct {
+    port: ?i64 = null,
+    banner: ?[]const u8 = null,
+    host_key_fp: ?[]const u8 = null,
+    session_ok: ?bool = null,
+    first_seen: ?[]const u8 = null,
+    last_seen: ?[]const u8 = null,
+};
+
+/// The mail server that answered at the address.
+pub const SmtpDetail = struct {
+    port: ?i64 = null,
+    banner: ?[]const u8 = null,
+    session_ok: ?bool = null,
+    first_seen: ?[]const u8 = null,
+    last_seen: ?[]const u8 = null,
+};
+
+/// One port a web server answered on. A row is only ever served whole.
+pub const WebDetail = struct {
+    port: i64,
+    tls_ok: bool,
+    session_ok: bool,
+    status_code: i64,
+    server: []const u8,
+    /// Where the answer redirected, if it did.
+    location: []const u8,
+    title: []const u8,
+    cert_subject_cn: []const u8,
+    cert_subject_o: []const u8,
+    cert_issuer_dn: []const u8,
+    cert_browser_trusted: bool,
+    tls_version: []const u8,
+    first_seen: []const u8,
+    last_seen: []const u8,
+};
+
+/// The open DNS resolver that answered at the address.
+pub const DnsResolverDetail = struct {
+    port: ?i64 = null,
+    recursion_available: ?bool = null,
+    rcode: ?i64 = null,
+    answer_correct: ?bool = null,
+    first_seen: ?[]const u8 = null,
+    last_seen: ?[]const u8 = null,
+};
+
+/// The BitTorrent client seen at the address in the last 90 days.
+pub const BitTorrentDetail = struct {
+    verified: ?bool = null,
+    id_matches_ip: ?bool = null,
+    first_seen: ?[]const u8 = null,
+    last_seen: ?[]const u8 = null,
+    last_reachable: ?[]const u8 = null,
+    days_seen: ?i64 = null,
+    num_ports: ?i64 = null,
+    peak_num_ports: ?i64 = null,
+    indexer: ?bool = null,
+    /// The two-letter codes its clients name themselves by.
+    clients: ?[]const []const u8 = null,
+};
+
+/// Where the address is. The country members are on every plan, an empty string
+/// where they are not known, so none has a default and an answer missing one
+/// fails to parse; the rest are a paid plan's, null when your plan does not
+/// include them.
 pub const Location = struct {
     /// The continent code, e.g. `EU`.
     continent: []const u8,
@@ -131,8 +239,21 @@ pub const Location = struct {
     flag_emoji: []const u8,
     /// The flag's code points, e.g. `U+1F1E6 U+1F1F9`.
     flag_unicode: []const u8,
+    region: ?[]const u8 = null,
+    /// The ISO 3166-2 region code.
+    region_code: ?[]const u8 = null,
+    city: ?[]const u8 = null,
+    postal_code: ?[]const u8 = null,
+    latitude: ?f64 = null,
+    longitude: ?f64 = null,
+    /// The radius in km holding the true location with 67% confidence.
+    accuracy_radius: ?i64 = null,
+    geoname_id: ?[]const u8 = null,
+    /// The US TV market (DMA) code.
+    dma_code: ?[]const u8 = null,
+    last_changed: ?[]const u8 = null,
 
-    /// Every member empty, as the API answers an address in no country.
+    /// Every member present and empty, as the API answers a bogon.
     pub const empty: Location = .{
         .continent = "",
         .continent_name = "",
@@ -144,6 +265,16 @@ pub const Location = struct {
         .currency_symbol = "",
         .flag_emoji = "",
         .flag_unicode = "",
+        .region = "",
+        .region_code = "",
+        .city = "",
+        .postal_code = "",
+        .latitude = 0,
+        .longitude = 0,
+        .accuracy_radius = 0,
+        .geoname_id = "",
+        .dma_code = "",
+        .last_changed = "",
     };
 };
 
@@ -162,10 +293,59 @@ pub const Asn = struct {
     /// The announced prefix covering the address, the most specific when
     /// several do.
     prefix: []const u8,
+    /// The country its registry assigned it to.
+    country: ?[]const u8 = null,
+    /// The announcement's RPKI status: `valid`, `invalid` or `not_found`.
+    rpki_status: ?[]const u8 = null,
 
-    /// AS 0 and every other member empty, as the API answers an address no
-    /// announcement covers.
-    pub const empty: Asn = .{ .asn = 0, .name = "", .domain = "", .type = "", .prefix = "" };
+    /// AS 0 and every other member present and empty, as the API answers a
+    /// bogon.
+    pub const empty: Asn = .{
+        .asn = 0,
+        .name = "",
+        .domain = "",
+        .type = "",
+        .prefix = "",
+        .country = "",
+        .rpki_status = "",
+    };
+};
+
+/// Who uses the address.
+pub const Company = struct {
+    name: []const u8,
+    domain: []const u8,
+    /// `hosting`, `isp`, `business`, `education` or `government`.
+    type: ?[]const u8 = null,
+    /// The ISO 3166 country code.
+    country: ?[]const u8 = null,
+
+    pub const empty: Company = .{ .name = "", .domain = "", .type = "", .country = "" };
+};
+
+/// Where to report abuse from the address.
+pub const AbuseContact = struct {
+    email: []const u8,
+    name: ?[]const u8 = null,
+    phone: ?[]const u8 = null,
+    address: ?[]const u8 = null,
+    country: ?[]const u8 = null,
+    /// The registry block the contact was derived from.
+    network: ?[]const u8 = null,
+    /// Whether ARIN reports the contact answered its yearly validation.
+    validated: ?bool = null,
+    unvalidated_since: ?[]const u8 = null,
+
+    pub const empty: AbuseContact = .{
+        .email = "",
+        .name = "",
+        .phone = "",
+        .address = "",
+        .country = "",
+        .network = "",
+        .validated = false,
+        .unvalidated_since = "",
+    };
 };
 
 /// One answer, and the memory behind it.
@@ -210,8 +390,9 @@ pub fn parseServed(gpa: Allocator, body: []const u8) ParseError!Lookup {
 }
 
 /// The answer a bogon gets, in the full shape the API serves at its widest plan:
-/// every flag present and false, every detail object present and empty, and a
-/// location and AS of empty strings and AS 0.
+/// every flag present and false, every detail object present and empty (`web`
+/// an empty list), `hostname` empty, and a location, AS, company and abuse
+/// contact with every member empty or zero.
 ///
 /// This is deliberately the WIDEST shape regardless of your plan, so a caller
 /// must not infer which fields their plan includes from a bogon answer.
@@ -232,6 +413,14 @@ pub fn bogonLookup(gpa: Allocator, ip: []const u8) Allocator.Error!Lookup {
         .is_dcproxy = false,
         .is_mobproxy = false,
         .is_pubproxy = false,
+        .is_anycast = false,
+        .is_carrier = false,
+        .is_satellite = false,
+        .is_ssh = false,
+        .is_smtp = false,
+        .is_web = false,
+        .is_dns_resolver = false,
+        .is_bittorrent = false,
         .vpn = .{},
         .hosting = .{},
         .relay = .{},
@@ -241,8 +430,18 @@ pub fn bogonLookup(gpa: Allocator, ip: []const u8) Allocator.Error!Lookup {
         .dcproxy = .{},
         .mobproxy = .{},
         .pubproxy = .{},
+        .carrier = .{},
+        .satellite = .{},
+        .ssh = .{},
+        .smtp = .{},
+        .web = &.{},
+        .dns_resolver = .{},
+        .bittorrent = .{},
         .location = .empty,
         .asn = .empty,
+        .company = .empty,
+        .hostname = "",
+        .abuse = .empty,
     };
     return lookup;
 }

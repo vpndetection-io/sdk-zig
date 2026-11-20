@@ -33,8 +33,8 @@ pub const CacheOptions = struct {
 
 pub const Options = struct {
     /// Without one a lookup is on Unlimited, the free plan: `ip`, `is_vpn`, the
-    /// Tor and relay members, `location` and `asn`, with no daily or monthly
-    /// cap. A batch needs a key on a paid plan.
+    /// Tor and relay members, `is_anycast`, `hostname`, `location` and `asn`,
+    /// with no daily or monthly cap. A batch needs a key on a paid plan.
     api_key: ?[]const u8 = null,
     base_url: []const u8 = default_base_url,
     /// Null disables caching, so every lookup of a non-bogon address is served.

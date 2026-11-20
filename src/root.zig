@@ -50,12 +50,23 @@ pub const CallOptions = @import("client.zig").CallOptions;
 pub const Options = @import("client.zig").Options;
 pub const default_base_url = @import("client.zig").default_base_url;
 
+pub const AbuseContact = @import("lookup.zig").AbuseContact;
 pub const Answer = @import("lookup.zig").Answer;
+pub const Asn = @import("lookup.zig").Asn;
+pub const BitTorrentDetail = @import("lookup.zig").BitTorrentDetail;
+pub const CarrierDetail = @import("lookup.zig").CarrierDetail;
 pub const ClassDetail = @import("lookup.zig").ClassDetail;
+pub const Company = @import("lookup.zig").Company;
+pub const DnsResolverDetail = @import("lookup.zig").DnsResolverDetail;
+pub const Location = @import("lookup.zig").Location;
 pub const Lookup = @import("lookup.zig").Lookup;
 pub const ProxyDetail = @import("lookup.zig").ProxyDetail;
 pub const PubproxyDetail = @import("lookup.zig").PubproxyDetail;
+pub const SatelliteDetail = @import("lookup.zig").SatelliteDetail;
+pub const SmtpDetail = @import("lookup.zig").SmtpDetail;
+pub const SshDetail = @import("lookup.zig").SshDetail;
 pub const VpnDetail = @import("lookup.zig").VpnDetail;
+pub const WebDetail = @import("lookup.zig").WebDetail;
 
 pub const DatabaseApi = @import("database.zig").DatabaseApi;
 pub const DbChecksums = @import("database.zig").DbChecksums;

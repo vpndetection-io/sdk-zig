@@ -80,6 +80,9 @@ comptime {
 }
 
 fn entryFor(comptime T: type, comptime name: []const u8) ?Entry {
+    // Asked once per member of every struct an answer holds, each a walk of the
+    // whole table, which a lookup answer's members outgrow the default quota in.
+    @setEvalBranchQuota(10_000);
     for (rules) |entry| {
         if (entry.T == T and std.mem.eql(u8, entry.name, name)) return entry;
     }
