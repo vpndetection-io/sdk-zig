@@ -99,8 +99,12 @@ test "a bogon is answered locally in the widest shape" {
     for (data.value.bogonResponse.emptyObjects) |name| {
         try std.testing.expectEqual(corpus.Member.empty_object, corpus.member(result.value, name));
     }
-    try corpus.expectObject(data.value.bogonResponse.location, result.value.location.?);
-    try corpus.expectObject(data.value.bogonResponse.asn, result.value.asn.?);
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    const expected = try corpus.members(arena.allocator(), .bogon);
+    for (expected.keys(), expected.values()) |name, want| {
+        try corpus.expectMember(arena.allocator(), result.value, name, want);
+    }
     try std.testing.expectEqual(0, harness.stub.callCount());
 }
 
@@ -109,7 +113,9 @@ test "a lookup preserves absent versus false across every plan shape" {
     const data = try corpus.load(gpa);
     defer data.deinit();
 
-    for (data.value.lookup) |case| {
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    for (data.value.lookup, 0..) |case, index| {
         const harness = try Harness.start(gpa);
         defer harness.deinit();
 
@@ -151,23 +157,12 @@ test "a lookup preserves absent versus false across every plan shape" {
                 return err;
             };
         }
-        if (case.expect.vpn) |expected| {
-            try corpus.expectDetail(expected, result.value.vpn.?);
-        }
-        if (case.expect.hosting) |expected| {
-            try corpus.expectDetail(expected, result.value.hosting.?);
-        }
-        if (case.expect.dcproxy) |expected| {
-            try corpus.expectDetail(expected, result.value.dcproxy.?);
-        }
-        if (case.expect.pubproxy) |expected| {
-            try corpus.expectDetail(expected, result.value.pubproxy.?);
-        }
-        if (case.expect.location) |expected| {
-            try corpus.expectObject(expected, result.value.location.?);
-        }
-        if (case.expect.asn) |expected| {
-            try corpus.expectObject(expected, result.value.asn.?);
+        const expected = try corpus.members(arena.allocator(), .{ .lookup = index });
+        for (expected.keys(), expected.values()) |name, want| {
+            corpus.expectMember(arena.allocator(), result.value, name, want) catch |err| {
+                std.debug.print("{s}: {s}\n", .{ case.name, name });
+                return err;
+            };
         }
     }
 }

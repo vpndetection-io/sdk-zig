@@ -83,12 +83,12 @@ pub const MappedCase = struct {
     why: []const u8,
 };
 
+/// The bogon answer's lists. Every other key the corpus gives it is a member the
+/// answer must hold as written, read by `members`.
 pub const BogonResponse = struct {
     why: []const u8,
     flagsFalse: []const []const u8,
     emptyObjects: []const []const u8,
-    location: std.json.Value,
-    asn: std.json.Value,
 };
 
 pub const LookupCase = struct {
@@ -99,19 +99,106 @@ pub const LookupCase = struct {
     expect: LookupExpect,
 };
 
+/// A lookup case's keys naming a role. Every other key of its `expect` is a
+/// member the answer must hold as written, read by `members`.
 pub const LookupExpect = struct {
     ip: []const u8,
     isBogon: bool,
     present: std.json.ArrayHashMap(bool) = .{},
     absent: []const []const u8 = &.{},
     emptyPresent: []const []const u8 = &.{},
-    vpn: ?std.json.Value = null,
-    hosting: ?std.json.Value = null,
-    dcproxy: ?std.json.Value = null,
-    pubproxy: ?std.json.Value = null,
-    location: ?std.json.Value = null,
-    asn: ?std.json.Value = null,
 };
+
+/// Where `members` reads: the bogon answer, or one lookup case's `expect`.
+pub const Expectation = union(enum) {
+    bogon,
+    lookup: usize,
+};
+
+/// Every member the corpus expects of an answer beyond the keys naming a role,
+/// read from the corpus as JSON rather than from a list of the members known
+/// when this was written, so a member the corpus gains cannot pass unasserted.
+pub fn members(arena: Allocator, of: Expectation) !std.json.ObjectMap {
+    const whole = try std.json.parseFromSliceLeaky(std.json.Value, arena, source, .{});
+    const object, const roles: []const []const u8 = switch (of) {
+        .bogon => .{
+            whole.object.get("bogonResponse").?.object,
+            &.{ "why", "flagsFalse", "emptyObjects" },
+        },
+        .lookup => |index| .{
+            whole.object.get("lookup").?.array.items[index].object.get("expect").?.object,
+            &.{ "ip", "isBogon", "present", "absent", "emptyPresent" },
+        },
+    };
+    var beyond = try object.clone(arena);
+    for (roles) |role| {
+        _ = beyond.orderedRemove(role);
+    }
+    return beyond;
+}
+
+/// Asserts the answer's member `name` holds `expected`: the typed member is
+/// written back out as JSON, so a member the decoder dropped or spelled
+/// differently cannot come back, and every key `expected` names must match. An
+/// answer with no member of that name fails.
+pub fn expectMember(arena: Allocator, answer: Answer, name: []const u8, expected: std.json.Value) !void {
+    inline for (comptime std.meta.fieldNames(Answer)) |field_name| {
+        if (std.mem.eql(u8, field_name, name)) {
+            const text = try std.fmt.allocPrint(arena, "{f}", .{std.json.fmt(
+                @field(answer, field_name),
+                .{ .emit_null_optional_fields = false },
+            )});
+            const actual = try std.json.parseFromSliceLeaky(std.json.Value, arena, text, .{});
+            if (!holds(expected, actual)) {
+                std.debug.print("{s} = {s}, want {f}\n", .{ name, text, std.json.fmt(expected, .{}) });
+                return error.TestExpectedEqual;
+            }
+            return;
+        }
+    }
+    std.debug.print("the answer has no member {s}\n", .{name});
+    return error.TestExpectedEqual;
+}
+
+/// Whether `got` holds `want`: every key of an object, every item of a list in
+/// order, and an equal scalar, a number compared by value.
+fn holds(want: std.json.Value, got: std.json.Value) bool {
+    switch (want) {
+        .object => |object| {
+            if (got != .object) return false;
+            var it = object.iterator();
+            while (it.next()) |entry| {
+                const inner = got.object.get(entry.key_ptr.*) orelse return false;
+                if (!holds(entry.value_ptr.*, inner)) return false;
+            }
+            return true;
+        },
+        .array => |array| {
+            if (got != .array or got.array.items.len != array.items.len) return false;
+            for (array.items, got.array.items) |want_item, got_item| {
+                if (!holds(want_item, got_item)) return false;
+            }
+            return true;
+        },
+        .string => |text| return got == .string and std.mem.eql(u8, text, got.string),
+        .bool => |flag| return got == .bool and got.bool == flag,
+        .null => return got == .null,
+        .integer, .float, .number_string => {
+            const a = number(want) orelse return false;
+            const b = number(got) orelse return false;
+            return a == b;
+        },
+    }
+}
+
+fn number(value: std.json.Value) ?f64 {
+    return switch (value) {
+        .integer => |n| @floatFromInt(n),
+        .float => |n| n,
+        .number_string => |text| std.fmt.parseFloat(f64, text) catch null,
+        else => null,
+    };
+}
 
 pub const ErrorCase = struct {
     name: []const u8,
@@ -369,57 +456,4 @@ fn allNull(value: anytype) bool {
         }
     }
     return true;
-}
-
-/// Compares a populated detail object against the fixture's expectation, key by
-/// key, so a field this library spells differently from the wire is caught here
-/// rather than reading as an absent one.
-pub fn expectDetail(expected: std.json.Value, actual: anytype) !void {
-    try std.testing.expect(expected == .object);
-    const want = expected.object;
-    var matched: usize = 0;
-    inline for (comptime std.meta.fieldNames(@TypeOf(actual))) |field_name| {
-        if (want.get(field_name)) |value| {
-            matched += 1;
-            const got = @field(actual, field_name) orelse {
-                std.debug.print("{s} is absent, expected {f}\n", .{ field_name, std.json.fmt(value, .{}) });
-                return error.TestExpectedEqual;
-            };
-            const Child = @typeInfo(@FieldType(@TypeOf(actual), field_name)).optional.child;
-            if (comptime Child == []const u8) {
-                try std.testing.expectEqualStrings(value.string, got);
-            } else if (comptime Child == bool) {
-                try std.testing.expectEqual(value.bool, got);
-            } else if (comptime Child == []const []const u8) {
-                try std.testing.expectEqual(value.array.items.len, got.len);
-                for (value.array.items, got) |want_item, got_item| {
-                    try std.testing.expectEqualStrings(want_item.string, got_item);
-                }
-            } else {
-                try std.testing.expectEqual(value.integer, got);
-            }
-        }
-    }
-    try std.testing.expectEqual(want.count(), matched);
-}
-
-/// Compares an object whose every member is required, the location and the AS,
-/// against the fixture's expectation, which must name every member.
-pub fn expectObject(expected: std.json.Value, actual: anytype) !void {
-    try std.testing.expect(expected == .object);
-    const want = expected.object;
-    const names = comptime std.meta.fieldNames(@TypeOf(actual));
-    inline for (names) |field_name| {
-        const value = want.get(field_name) orelse {
-            std.debug.print("{s} is not in the expected object\n", .{field_name});
-            return error.TestExpectedEqual;
-        };
-        const got = @field(actual, field_name);
-        if (comptime @FieldType(@TypeOf(actual), field_name) == []const u8) {
-            try std.testing.expectEqualStrings(value.string, got);
-        } else {
-            try std.testing.expectEqual(value.integer, got);
-        }
-    }
-    try std.testing.expectEqual(want.count(), names.len);
 }
