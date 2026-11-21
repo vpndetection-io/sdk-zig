@@ -1338,9 +1338,10 @@ paths:
 
         `scopes` is what the credential may do now, so a client can check
         before it calls.
+
+        Needs the `account.read` scope.
       security:
-        - bearerAuth:
-            - account.read
+        - bearerAuth: []
       responses:
         '200':
           description: The caller.
@@ -1376,9 +1377,10 @@ paths:
         The organization this credential is scoped to.
 
         A credential belongs to one organization, so this takes no ID.
+
+        Needs the `org.read` scope.
       security:
-        - bearerAuth:
-            - org.read
+        - bearerAuth: []
       responses:
         '200':
           description: The organization.
@@ -1400,9 +1402,10 @@ paths:
         The members of the organization this credential is scoped to.
 
         Read-only. Members are invited by email from the console.
+
+        Needs the `org.read` scope.
       security:
-        - bearerAuth:
-            - org.read
+        - bearerAuth: []
       responses:
         '200':
           description: The members.
@@ -1428,9 +1431,10 @@ paths:
         A key issued before this product stored secrets recoverably was never
         kept, so `reveal` will refuse it permanently; rotating produces one
         that can be read.
+
+        Needs the `apikeys.read` scope.
       security:
-        - bearerAuth:
-            - apikeys.read
+        - bearerAuth: []
       responses:
         '200':
           description: The organization's keys, newest first.
@@ -1452,9 +1456,10 @@ paths:
 
         Store the secret now. Reading it back later takes `reveal` and the
         `apikeys.reveal` scope.
+
+        Needs the `apikeys.manage` scope.
       security:
-        - bearerAuth:
-            - apikeys.manage
+        - bearerAuth: []
       requestBody:
         required: true
         content:
@@ -1486,9 +1491,7 @@ paths:
         back in the answer, so this needs `apikeys.reveal` as well as
         `apikeys.manage`.
       security:
-        - bearerAuth:
-            - apikeys.manage
-            - apikeys.reveal
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/ApikeyIdParam'
       responses:
@@ -1514,9 +1517,10 @@ paths:
         Stops the key working. Revocation is soft: the key stays listed with a
         `revoked_at`, because the organization still owns whatever it did while
         it was alive.
+
+        Needs the `apikeys.manage` scope.
       security:
-        - bearerAuth:
-            - apikeys.manage
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/ApikeyIdParam'
       responses:
@@ -1546,9 +1550,10 @@ paths:
 
         Refused with `NOT_RETRIEVABLE` for a key issued before we kept secrets.
         Rotate that key instead.
+
+        Needs the `apikeys.reveal` scope.
       security:
-        - bearerAuth:
-            - apikeys.reveal
+        - bearerAuth: []
       parameters:
         - $ref: '#/components/parameters/ApikeyIdParam'
       responses:
@@ -2396,6 +2401,8 @@ components:
         - domain
         - type
         - prefix
+        - country
+        - rpki_status
       properties:
         asn:
           type: integer
@@ -2482,6 +2489,7 @@ components:
           example: US
         asn:
           type: integer
+          format: int64
           description: The AS the operator announces it from.
           example: 14593
         confidence:
