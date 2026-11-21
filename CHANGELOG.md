@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.17.1 - 2026-11-21
+
+### Fixes
+
+- Re-pin the spec: an AS always carries its country and RPKI status ([`fc9fc02`](https://github.com/vpndetection-io/sdk-zig/commit/fc9fc021f55541f3a60c385b1f073ad5b3aca428))
+
 ## 4.17.0 - 2026-11-20
 
 ### Features
