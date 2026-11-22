@@ -2,6 +2,17 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.18.0 - 2026-11-22
+
+### Features
+
+- Read is_bot on every answer, and bot, whose bot it is, on a paid plan's ([`3548d17`](https://github.com/vpndetection-io/sdk-zig/commit/3548d17fcf33659baa44102fe3060df1ffbe2007))
+
+### Fixes
+
+- Require the AS's country and RPKI status, as the API always sends them ([`329da9e`](https://github.com/vpndetection-io/sdk-zig/commit/329da9e4973d0555a614ac652c156b8e83300895))
+- Refuse a database summary or checksum digest sent as null or left out ([`0c26c70`](https://github.com/vpndetection-io/sdk-zig/commit/0c26c70cbf66fd7509ef2f6a73196363eef30b0b))
+
 ## 4.17.1 - 2026-11-21
 
 ### Fixes
