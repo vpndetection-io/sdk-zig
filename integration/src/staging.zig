@@ -132,9 +132,12 @@ pub fn assertShape(fixture: Fixture) !void {
     inline for (.{ "resproxy", "dcproxy", "mobproxy" }) |name| {
         try assertProxy(name, @field(answer, name), @field(answer, "is_" ++ name));
     }
-    inline for (.{ "carrier", "satellite", "ssh", "smtp", "dns_resolver", "bittorrent" }) |name| {
+    inline for (.{ "carrier", "satellite", "ssh", "smtp", "dns_resolver", "bittorrent", "bot" }) |name| {
         try assertEveryKey(name, @field(answer, name), @field(answer, "is_" ++ name));
     }
+    // Every plan answers whether a bot uses the address.
+    try std.testing.expect(fixture.has("is_bot"));
+    try std.testing.expect(answer.is_bot != null);
     if (answer.web) |rows| {
         // A row is typed whole, so one missing a documented key fails to parse.
         try std.testing.expect(answer.is_web != null);
