@@ -24,7 +24,7 @@ Requires Zig **0.16.0**, **0.17.0** or **0.17.1**. Zig is pre-1.0 and its standa
 
 ## Usage
 
-**No API key needed to start.** Unlimited, the free plan, answers `ip`, `is_vpn`, Tor and relay detection, `is_anycast`, `hostname`, `location` and `asn`, the AS's country and RPKI status included, with no daily or monthly cap, with a key or without one.
+**No API key needed to start.** Unlimited, the free plan, answers `ip`, `is_vpn`, Tor and relay detection, `is_bot`, `is_anycast`, `hostname`, `location` and `asn`, the AS's country and RPKI status included, with no daily or monthly cap, with a key or without one.
 
 ```zig
 const std = @import("std");
@@ -61,7 +61,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### With an API key
 
-Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, and the provider (its ID and its name), confidence and last-seen detail behind each flag; `is_carrier`, `is_satellite`, `is_ssh`, `is_smtp`, `is_web`, `is_dns_resolver` and `is_bittorrent`, with the detail behind each (`web` is a list, one row per web service seen); the `company` using the address and its `abuse` contact; and `location` down to the city, postal code and coordinates. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.vpndetection.io), then pass it in:
+Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, and the provider (its ID and its name), confidence and last-seen detail behind each flag; `is_carrier`, `is_satellite`, `is_ssh`, `is_smtp`, `is_web`, `is_dns_resolver` and `is_bittorrent`, with the detail behind each (`web` is a list, one row per web service seen); `bot`, whose bot uses the address when `is_bot` is true: its operator, the bots it serves and what they do (`agents` and `categories`, lists kept in the order served), and whether the operator vouches for it (`verified`, `identity`, `verified_by`); the `company` using the address and its `abuse` contact; and `location` down to the city, postal code and coordinates. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.vpndetection.io), then pass it in:
 
 ```zig
 var client = try vpndetection.Client.init(gpa, io, .{ .api_key = key });
@@ -304,7 +304,7 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Unlimited leaves out `is_hosting`, `is_cdn`, the four proxy flags and the carrier, satellite, SSH, SMTP, web, DNS resolver and BitTorrent flags, of the detail behind each flag it answers only Tor's and relay's, and it leaves out `company`, `abuse` and the finer `location` members, such as `city`; a free-plan key's answer carries `trial_expired`, true once its trial is spent, and a paid key's carries `cap_reached`, true once its organization's overage cap is reached and the answer has Unlimited's. Every field beyond `ip` and `is_vpn` is optional, because your key decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
+Unlimited leaves out `is_hosting`, `is_cdn`, the four proxy flags and the carrier, satellite, SSH, SMTP, web, DNS resolver and BitTorrent flags, of the detail behind each flag it answers only Tor's and relay's (it answers `is_bot` but leaves out `bot`), and it leaves out `company`, `abuse` and the finer `location` members, such as `city`; a free-plan key's answer carries `trial_expired`, true once its trial is spent, and a paid key's carries `cap_reached`, true once its organization's overage cap is reached and the answer has Unlimited's. Every field beyond `ip` and `is_vpn` is optional, because your key decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
 
 ```zig
 const hosting = result.value.is_hosting orelse false; // when you only want the flag
