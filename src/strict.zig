@@ -4,8 +4,9 @@
 //! and from a `Value` alike, and no `ParseOptions` field turns that off. A date
 //! stays a string here, so any string passes for one, and a member the spec
 //! requires but a struct gives a default (so a caller can build one by hand)
-//! reads as that default when the wire leaves it out. The other SDKs refuse all
-//! three as an answer they cannot read, so an answer is parsed into a `Value`
+//! reads as that default when the wire leaves it out, or as null when the wire
+//! sends a null the spec does not allow. The other SDKs refuse all of these as
+//! an answer they cannot read, so an answer is parsed into a `Value`
 //! first, checked against `T` with a comptime walk, and only then is `T` built
 //! from that `Value`.
 
@@ -20,7 +21,8 @@ const Value = std.json.Value;
 
 /// `T` from `body`, or `error.WrongType` when a member `T` declares a number
 /// holds a JSON string, a date is not in the form the spec names, or a member
-/// the spec requires is missing, at any depth. Any other way `body` fails to be
+/// the spec requires is missing or null where the spec allows no null, at any
+/// depth. Any other way `body` fails to be
 /// a `T` is the error `std.json` gives for it.
 pub fn parseLeaky(comptime T: type, arena: Allocator, body: []const u8, options: std.json.ParseOptions) !T {
     const value = try std.json.parseFromSliceLeaky(Value, arena, body, .{});
@@ -38,14 +40,16 @@ const Form = enum {
     objects,
 };
 
-/// What the spec says of one member that its Zig type does not: its form, and
+/// What the spec says of one member that its Zig type does not: its form,
 /// whether the wire must carry it though the struct gives it a default, so a
-/// caller can still build one by hand.
-const Entry = struct { T: type, name: []const u8, required: bool = false, form: ?Form = null };
+/// caller can still build one by hand, and whether it must not be null though
+/// its type is optional, since the spec does not mark it nullable.
+const Entry = struct { T: type, name: []const u8, required: bool = false, non_null: bool = false, form: ?Form = null };
 
 /// Every member the spec says more of than its type does, by the struct that
 /// holds it. A re-pin that adds a date or a required member with a default to
-/// one of these types adds it here.
+/// one of these types adds it here, `non_null` too where its type is optional
+/// and the spec does not mark it nullable.
 const rules = [_]Entry{
     .{ .T = lookup.VpnDetail, .name = "last_seen", .form = .date },
     .{ .T = lookup.ClassDetail, .name = "last_seen", .form = .date },
@@ -56,7 +60,7 @@ const rules = [_]Entry{
     .{ .T = entitlement.EntitlementUsage, .name = "window_start", .form = .date_time },
     .{ .T = entitlement.EntitlementUsage, .name = "window_end", .form = .date_time },
     .{ .T = entitlement.EntitlementPlan, .name = "name", .required = true },
-    .{ .T = database.Database, .name = "summary", .required = true },
+    .{ .T = database.Database, .name = "summary", .required = true, .non_null = true },
     .{ .T = database.Database, .name = "license_type", .required = true },
     .{ .T = database.Database, .name = "starts", .required = true, .form = .date_time },
     .{ .T = database.Database, .name = "expires", .required = true, .form = .date_time },
@@ -69,12 +73,20 @@ const rules = [_]Entry{
     .{ .T = database.DatabaseMetadata, .name = "updated", .form = .date },
     .{ .T = database.DatabaseMetadata, .name = "schema", .required = true },
     .{ .T = database.DatabaseMetadata, .name = "sample", .form = .objects },
+    .{ .T = database.DbChecksums, .name = "md5", .required = true, .non_null = true },
+    .{ .T = database.DbChecksums, .name = "sha1", .required = true, .non_null = true },
+    .{ .T = database.DbChecksums, .name = "sha256", .required = true, .non_null = true },
+    .{ .T = database.DbChecksums, .name = "sha512", .required = true, .non_null = true },
 };
 
 comptime {
     for (rules) |entry| {
         if (!@hasField(entry.T, entry.name)) {
             @compileError(@typeName(entry.T) ++ " has no member " ++ entry.name);
+        }
+        // Any other type refuses a null by itself.
+        if (entry.non_null and @typeInfo(@FieldType(entry.T, entry.name)) != .optional) {
+            @compileError(@typeName(entry.T) ++ "." ++ entry.name ++ " is not optional");
         }
     }
 }
@@ -120,8 +132,10 @@ fn conforms(comptime T: type, value: Value) bool {
             inline for (comptime std.meta.fieldNames(T)) |name| {
                 const entry = comptime entryFor(T, name);
                 const required = comptime if (entry) |e| e.required else false;
+                const non_null = comptime if (entry) |e| e.non_null else false;
                 const form: ?Form = comptime if (entry) |e| e.form else null;
                 if (object.get(name)) |member| {
+                    if (non_null and member == .null) return false;
                     if (!conforms(@FieldType(T, name), member)) return false;
                     if (form) |given| if (!follows(given, member)) return false;
                 } else if (required) {

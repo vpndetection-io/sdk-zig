@@ -1081,8 +1081,9 @@ test "myEntitlement surfaces an unauthorized key" {
 
 // A member of the wrong type at any depth, a numeric string where a number is
 // due among them, a date the spec's format does not name, and a member the spec
-// requires that is missing: each is an answer the call cannot read, so it is
-// retried like a 5xx and carries its status, as a body that is not JSON is.
+// requires that is missing, or null where the spec allows none: each is an
+// answer the call cannot read, so it is retried like a 5xx and carries its
+// status, as a body that is not JSON is.
 const lookup_ok =
     \\{"ip":"1.1.1.1","is_vpn":true,"is_dcproxy":true,"is_pubproxy":true,
     \\"vpn":{"provider":"p","last_seen":"2026-10-20","confidence":"high"},
@@ -1146,6 +1147,7 @@ const wrong_answers = [_]Case{
     .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"starts\":\"2026-01-01T00:00:00Z\"", .to = "\"starts\":\"2026-01-01 00:00:00Z\"" },
     .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"open\":false,", .to = "" },
     .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"summary\":\"s\",", .to = "" },
+    .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"summary\":\"s\"", .to = "\"summary\":null" },
     .{ .path = "/api/v1/database/list", .body = list_ok, .from = "\"renews_at\":null,", .to = "" },
     .{ .path = "/api/v1/database/metadata", .body = metadata_ok, .from = "\"entries\":5", .to = "\"entries\":\"5\"" },
     .{ .path = "/api/v1/database/metadata", .body = metadata_ok, .from = "\"mmdb\":760", .to = "\"mmdb\":\"760\"" },
@@ -1156,6 +1158,9 @@ const wrong_answers = [_]Case{
     .{ .path = "/api/v1/database/metadata", .body = metadata_ok, .from = "\"schema\":{\"mmdb\":[{\"name\":\"ip\",\"type\":\"string\"}]},", .to = "" },
     .{ .path = "/api/v1/database/checksum", .body = checksum_ok, .from = "\"id\":\"vpn_ip_v1\",", .to = "" },
     .{ .path = "/api/v1/database/checksum", .body = checksum_ok, .from = "\"md5\":\"a\"", .to = "\"md5\":7" },
+    .{ .path = "/api/v1/database/checksum", .body = checksum_ok, .from = "\"md5\":\"a\",", .to = "" },
+    .{ .path = "/api/v1/database/checksum", .body = checksum_ok, .from = ",\"sha512\":\"d\"", .to = "" },
+    .{ .path = "/api/v1/database/checksum", .body = checksum_ok, .from = "\"sha256\":\"c\"", .to = "\"sha256\":null" },
     .{ .path = "/api/v1/database/downloads", .body = downloads_ok, .from = "\"bytes\":760", .to = "\"bytes\":\"760\"" },
     .{ .path = "/api/v1/database/downloads", .body = downloads_ok, .from = "\"created\":\"2026-10-20T10:00:00Z\"", .to = "\"created\":\"x\"" },
     .{ .path = "/api/v1/database/downloads", .body = downloads_ok, .from = "\"created\":\"2026-10-20T10:00:00Z\"", .to = "\"created\":\"2026-10-20T10:00:00+0500\"" },
@@ -1189,7 +1194,7 @@ fn callFor(client: *vpndetection.Client, path: []const u8, diag: *vpndetection.D
     return null;
 }
 
-test "an answer with a member of the wrong type, a malformed date or a required member missing is retried" {
+test "an answer with a member of the wrong type, a malformed date or a required member missing or null is retried" {
     const gpa = std.testing.allocator;
     // Every well-formed answer above reads, so each case below fails on its
     // one change alone.
