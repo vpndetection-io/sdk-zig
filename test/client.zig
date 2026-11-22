@@ -1089,7 +1089,7 @@ const lookup_ok =
     \\"vpn":{"provider":"p","last_seen":"2026-10-20","confidence":"high"},
     \\"dcproxy":{"provider":"d","first_seen":"2026-10-01","last_seen":"2026-10-20","hits":3,"hits_days_pct":10,"providers_num":1},
     \\"pubproxy":{"entry":true,"exit":false,"protocols":["http"],"num_ports":2,"num_proxies":0,"last_seen":"2026-10-20","last_usable":""},
-    \\"asn":{"asn":5,"name":"n","domain":"d","type":"t","prefix":"p"}}
+    \\"asn":{"asn":5,"name":"n","domain":"d","type":"t","prefix":"p","country":"US","rpki_status":"valid"}}
 ;
 const entitlement_ok =
     \\{"org_id":"o","apikey":{"id":"k","expires":null,"allowed_cidrs":[]},"plan":{"key":"max","name":"Max","tier":"max"},
@@ -1128,7 +1128,12 @@ const wrong_answers = [_]Case{
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"first_seen\":\"2026-10-01\"", .to = "\"first_seen\":\"2026-02-30\"" },
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"first_seen\":\"2026-10-01\"", .to = "\"first_seen\":\"2026-10-1\"" },
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"last_seen\":\"2026-10-20\",\"last_usable\"", .to = "\"last_seen\":\"2026-10-20T10:00:00Z\",\"last_usable\"" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = ",\"country\":\"US\"", .to = "" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = ",\"rpki_status\":\"valid\"", .to = "" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"country\":\"US\"", .to = "\"country\":null" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"rpki_status\":\"valid\"", .to = "\"rpki_status\":null" },
     .{ .path = "/myip", .body = lookup_ok, .from = "\"hits\":3", .to = "\"hits\":\"3\"" },
+    .{ .path = "/myip", .body = lookup_ok, .from = "\"rpki_status\":\"valid\"", .to = "\"rpki_status\":null" },
     .{ .path = "/myip", .body = lookup_ok, .from = "\"last_seen\":\"2026-10-20\",\"confidence\"", .to = "\"last_seen\":\"x\",\"confidence\"" },
     .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"requests\":1", .to = "\"requests\":\"1\"" },
     .{ .path = "/api/v1/entitlement", .body = entitlement_ok, .from = "\"window_start\":\"2026-10-01T00:00:00Z\"", .to = "\"window_start\":\"x\"" },
@@ -1241,23 +1246,24 @@ test "an answer with a member of the wrong type, a malformed date or a required 
     try std.testing.expectEqual(0, failures);
 }
 
-test "a batch entry with a member of the wrong type or a malformed date fails that address alone" {
+test "a batch entry with a member of the wrong type, a malformed date or a required member null fails that address alone" {
     const gpa = std.testing.allocator;
     const harness = try Harness.start(gpa);
     defer harness.deinit();
     try harness.stub.route("/batch", .{
         .body = "{\"results\":{\"1.1.1.1\":{\"ip\":\"1.1.1.1\",\"is_vpn\":true,\"dcproxy\":{\"hits\":\"3\"}}," ++
             "\"8.8.8.8\":{\"ip\":\"8.8.8.8\",\"is_vpn\":true,\"vpn\":{\"last_seen\":\"tomorrow\"}}," ++
+            "\"4.4.4.4\":{\"ip\":\"4.4.4.4\",\"is_vpn\":false,\"asn\":{\"asn\":5,\"name\":\"n\",\"domain\":\"d\",\"type\":\"t\",\"prefix\":\"p\",\"country\":null,\"rpki_status\":\"valid\"}}," ++
             "\"9.9.9.9\":{\"ip\":\"9.9.9.9\",\"is_vpn\":true,\"vpn\":{\"last_seen\":\"2026-10-20\"}}}}",
         .verbatim = true,
     });
     var client = try harness.client(.{ .retries = 2 });
     defer client.deinit();
-    var batch = try client.lookupBatch(&.{ "1.1.1.1", "8.8.8.8", "9.9.9.9" }, .{});
+    var batch = try client.lookupBatch(&.{ "1.1.1.1", "8.8.8.8", "4.4.4.4", "9.9.9.9" }, .{});
     defer batch.deinit();
 
     try std.testing.expectEqual(1, harness.stub.callCount());
-    for ([_][]const u8{ "1.1.1.1", "8.8.8.8" }) |ip| switch (batch.get(ip).?) {
+    for ([_][]const u8{ "1.1.1.1", "8.8.8.8", "4.4.4.4" }) |ip| switch (batch.get(ip).?) {
         .ok => {
             std.debug.print("{s} answered\n", .{ip});
             return error.TestUnexpectedResult;

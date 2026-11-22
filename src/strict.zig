@@ -56,6 +56,8 @@ const rules = [_]Entry{
     .{ .T = lookup.ProxyDetail, .name = "first_seen", .form = .date },
     .{ .T = lookup.ProxyDetail, .name = "last_seen", .form = .date },
     .{ .T = lookup.PubproxyDetail, .name = "last_seen", .form = .date },
+    .{ .T = lookup.Asn, .name = "country", .required = true, .non_null = true },
+    .{ .T = lookup.Asn, .name = "rpki_status", .required = true, .non_null = true },
     .{ .T = entitlement.EntitlementApikey, .name = "expires", .form = .date_time },
     .{ .T = entitlement.EntitlementUsage, .name = "window_start", .form = .date_time },
     .{ .T = entitlement.EntitlementUsage, .name = "window_end", .form = .date_time },
