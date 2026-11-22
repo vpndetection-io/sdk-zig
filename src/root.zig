@@ -54,6 +54,7 @@ pub const AbuseContact = @import("lookup.zig").AbuseContact;
 pub const Answer = @import("lookup.zig").Answer;
 pub const Asn = @import("lookup.zig").Asn;
 pub const BitTorrentDetail = @import("lookup.zig").BitTorrentDetail;
+pub const BotDetail = @import("lookup.zig").BotDetail;
 pub const CarrierDetail = @import("lookup.zig").CarrierDetail;
 pub const ClassDetail = @import("lookup.zig").ClassDetail;
 pub const Company = @import("lookup.zig").Company;
