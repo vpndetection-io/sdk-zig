@@ -61,7 +61,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### With an API key
 
-Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, and the provider (its ID and its name), confidence and last-seen detail behind each flag; `is_carrier`, `is_satellite`, `is_ssh`, `is_smtp`, `is_web`, `is_dns_resolver` and `is_bittorrent`, with the detail behind each (`web` is a list, one row per web service seen); `bot`, whose bot uses the address when `is_bot` is true: its operator, the bots it serves and what they do (`agents` and `categories`, lists kept in the order served), and whether the operator vouches for it (`verified`, `identity`, `verified_by`); the `company` using the address and its `abuse` contact; and `location` down to the city, postal code and coordinates. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.vpndetection.io), then pass it in:
+Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, and the provider (its ID and its name), confidence and last-seen detail behind each flag; `is_carrier`, `is_satellite`, `is_ssh`, `is_smtp`, `is_web`, `is_dns_resolver` and `is_bittorrent`, with the detail behind each (`web` is a list, one row per web service seen); `bot`, whose bot uses the address when `is_bot` is true: its operator, the bots it serves and what they do (`agents` and `categories`, lists kept in the order served), and whether the operator vouches for it (`verified`, `identity`, `verified_by`); `user_agent`, when a lookup sends the user agent of the request you are deciding on (below); the `company` using the address and its `abuse` contact; and `location` down to the city, postal code and coordinates. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.vpndetection.io), then pass it in:
 
 ```zig
 var client = try vpndetection.Client.init(gpa, io, .{ .api_key = key });
@@ -76,6 +76,32 @@ std.debug.print("{s}\n", .{result.value.vpn.?.provider.?});       // nordvpn, on
 ```
 
 The blanks around a key, a file's trailing newline among them, are dropped, and a key of blanks alone is no key at all. A key holding any other control character is refused: every call that would send it fails with `BadRequest` before anything leaves the client.
+
+### The visitor's user agent
+
+Pass the `User-Agent` header of the request you are deciding on, and with every field (a paid plan or the trial) the answer carries `user_agent`: the agent it names, what kind of client that is, and whether the address bears it out (`verified`, `spoofed`, `unverifiable` or `not_bot`):
+
+```zig
+const result = try client.lookupWith("66.249.66.1", .{ .user_agent = request_user_agent });
+defer result.deinit();
+
+if (result.value.user_agent) |ua| {
+    std.debug.print("{s}: {s}\n", .{ ua.agent, ua.verdict }); // Googlebot: verified
+}
+```
+
+`myIpWith` takes one too. A batch takes a map from each address, exactly as you list it, to its agent:
+
+```zig
+var agents: std.StringHashMapUnmanaged([]const u8) = .empty;
+defer agents.deinit(gpa);
+try agents.put(gpa, "66.249.66.1", request_user_agent);
+
+var batch = try client.lookupBatch(&.{ "66.249.66.1", "8.8.8.8" }, .{ .user_agents = agents });
+defer batch.deinit();
+```
+
+An empty agent is none. Answers are cached on the address and the agent together, so an answer with an agent is never handed to the same address's lookup without one, or with another agent. A private or reserved address is answered locally and carries no `user_agent`. The agent is never kept, and nothing sent with a lookup feeds our data.
 
 ### Your own address
 
@@ -304,7 +330,7 @@ Each redirect URI must be https on a public host name, or http on a loopback add
 
 ### Absent is not false
 
-Unlimited leaves out `is_hosting`, `is_cdn`, the four proxy flags and the carrier, satellite, SSH, SMTP, web, DNS resolver and BitTorrent flags, of the detail behind each flag it answers only Tor's and relay's (it answers `is_bot` but leaves out `bot`), and it leaves out `company`, `abuse` and the finer `location` members, such as `city`; a free-plan key's answer carries `trial_expired`, true once its trial is spent, and a paid key's carries `cap_reached`, true once its organization's overage cap is reached and the answer has Unlimited's. Every field beyond `ip` and `is_vpn` is optional, because your key decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
+Unlimited leaves out `is_hosting`, `is_cdn`, the four proxy flags and the carrier, satellite, SSH, SMTP, web, DNS resolver and BitTorrent flags, of the detail behind each flag it answers only Tor's and relay's (it answers `is_bot` but leaves out `bot`), and it leaves out `company`, `abuse` and the finer `location` members, such as `city`; a free-plan key's answer carries `trial_expired`, true once its trial is spent, and a paid key's carries `cap_reached`, true once its organization's overage cap is reached and the answer has Unlimited's; `user_agent` is there only when the lookup sent one, with every field. Every field beyond `ip` and `is_vpn` is optional, because your key decides which of them the API sends. `null` means "not in your plan", not "checked, and no".
 
 ```zig
 const hosting = result.value.is_hosting orelse false; // when you only want the flag
