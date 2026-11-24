@@ -57,6 +57,10 @@ pub const Answer = struct {
     cdn: ?ClassDetail = null,
     /// Whose bot uses the address, on a paid plan; empty when `is_bot` is false.
     bot: ?BotDetail = null,
+    /// The agent the `user_agent` sent with the lookup names, and whether the
+    /// address bears it out; on a paid plan or the trial, and only when one was
+    /// sent. A bogon is answered locally and never carries one.
+    user_agent: ?UserAgentVerdict = null,
     resproxy: ?ProxyDetail = null,
     dcproxy: ?ProxyDetail = null,
     mobproxy: ?ProxyDetail = null,
@@ -139,6 +143,26 @@ pub const BotDetail = struct {
     confidence: ?[]const u8 = null,
     first_seen: ?[]const u8 = null,
     last_seen: ?[]const u8 = null,
+};
+
+/// What the API made of the user agent a lookup sent: the agent it names, what
+/// kind of client that is, and whether the address bears it out. Every member
+/// is present whenever the object is.
+pub const UserAgentVerdict = struct {
+    /// The agent the user agent names, e.g. `Googlebot` or `Chrome`; `Unknown`
+    /// where it names none.
+    agent: []const u8,
+    /// `browser`, `inapp`, `automation`, `bot`, `ai-bot`, `http-client` or
+    /// `unknown`: what kind of client the user agent says it is.
+    kind: []const u8,
+    /// `verified` (the agent's operator vouches for this address as it),
+    /// `spoofed` (the operator of a bot that publishes its addresses, or whose
+    /// registered space it uses, does not vouch for this one, or this address
+    /// posed as the bot before), `unverifiable` (a bot no published list or
+    /// registered space can confirm) or `not_bot` (a browser, an app or a
+    /// script). A string rather than an enum, so a verdict added later does not
+    /// fail the whole answer.
+    verdict: []const u8,
 };
 
 /// The shared detail shape for the residential, datacenter and mobile proxy

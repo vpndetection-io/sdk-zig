@@ -66,6 +66,7 @@ pub const PubproxyDetail = @import("lookup.zig").PubproxyDetail;
 pub const SatelliteDetail = @import("lookup.zig").SatelliteDetail;
 pub const SmtpDetail = @import("lookup.zig").SmtpDetail;
 pub const SshDetail = @import("lookup.zig").SshDetail;
+pub const UserAgentVerdict = @import("lookup.zig").UserAgentVerdict;
 pub const VpnDetail = @import("lookup.zig").VpnDetail;
 pub const WebDetail = @import("lookup.zig").WebDetail;
 
