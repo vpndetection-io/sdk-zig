@@ -116,9 +116,10 @@ pub const ClassDetail = struct {
 /// one that is not verified, the bots it claimed to be), what they do, and how
 /// that is known. `agents` and `categories` keep the order the API sends.
 pub const BotDetail = struct {
-    /// The bot operator's ID, empty where no operator is known.
+    /// The bot operator's ID; for an address that is not verified, the
+    /// operator its claim named. Empty where no operator is known.
     provider: ?[]const u8 = null,
-    /// The operator's name, empty where no operator is known.
+    /// That operator's name, empty where no operator is known.
     provider_name: ?[]const u8 = null,
     /// The bots, as their user agents name them, e.g. `Googlebot`; empty when
     /// none is named.
