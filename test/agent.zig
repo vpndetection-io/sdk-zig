@@ -91,12 +91,15 @@ test "an agent longer than the API reads is sent whole" {
     var client = try harness.client(.{ .retries = 0 });
     defer client.deinit();
 
-    const long = "a" ** 2000;
-    const answer = try client.lookupWith(address, .{ .user_agent = long });
+    // `@splat` rather than `**`, which Zig 0.17 dropped.
+    const long: [2000]u8 = @splat('a');
+    const answer = try client.lookupWith(address, .{ .user_agent = &long });
     answer.deinit();
     const calls = harness.stub.seen();
     try std.testing.expectEqual(1, calls.len);
-    try std.testing.expectEqualStrings("/" ++ address ++ "?user_agent=" ++ long, calls[0].target);
+    const prefix = "/" ++ address ++ "?user_agent=";
+    try std.testing.expect(std.mem.startsWith(u8, calls[0].target, prefix));
+    try std.testing.expectEqualStrings(&long, calls[0].target[prefix.len..]);
 }
 
 test "the cache keys on the address and the agent together" {
