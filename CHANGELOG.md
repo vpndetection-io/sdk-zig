@@ -2,6 +2,16 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.19.0 - 2026-11-24
+
+### Features
+
+- Send a visitor's user agent with a lookup, myIp or a batch ([`1709626`](https://github.com/vpndetection-io/sdk-zig/commit/170962603b039ed4c29ae6ec628b224b95e8cc77))
+
+### Fixes
+
+- Refuse a malformed first or last day on six more details ([`e6e828a`](https://github.com/vpndetection-io/sdk-zig/commit/e6e828a1ee5fa8232d2577a50ef4307b2614b166))
+
 ## 4.18.0 - 2026-11-22
 
 ### Features
