@@ -2,6 +2,14 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.19.1 - 2026-11-25
+
+### Fixes
+
+- README: one paid plan, Data; the entitlement example names it ([`07e0200`](https://github.com/vpndetection-io/sdk-zig/commit/07e02005776071fe10ad5db53f30f72fc25d7a5d))
+- Docs: the entitlement plan's example key is the Data plan's ([`0f9d72b`](https://github.com/vpndetection-io/sdk-zig/commit/0f9d72bc9262e0c70f607180992b10d019eac79a))
+- Spec 2026.11.25: doc comments name a paid plan, the entitlement example the Data plan ([`763d10e`](https://github.com/vpndetection-io/sdk-zig/commit/763d10e370a97689f9ab6447b7746f1db0a1f3dd))
+
 ## 4.19.0 - 2026-11-24
 
 ### Features
