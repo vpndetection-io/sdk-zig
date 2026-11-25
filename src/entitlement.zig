@@ -31,7 +31,7 @@ pub const EntitlementApikey = struct {
 /// would otherwise fail the whole response to parse.
 pub const EntitlementPlan = struct {
     /// The plan the organization is on, as an identifier that is never renamed
-    /// or reused: `free` for the free plan, or a paid plan's key, e.g. `max`.
+    /// or reused: `free` for the free plan, or a paid plan's key, e.g. `data_4`.
     /// Compare against this, and show `name`.
     key: []const u8,
     /// The plan's name as the site and console show it: `Unlimited` for the
