@@ -61,7 +61,7 @@ Everything the client hands back is allocated with the allocator you gave `init`
 
 ### With an API key
 
-Every paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, and the provider (its ID and its name), confidence and last-seen detail behind each flag; `is_carrier`, `is_satellite`, `is_ssh`, `is_smtp`, `is_web`, `is_dns_resolver` and `is_bittorrent`, with the detail behind each (`web` is a list, one row per web service seen); `bot`, whose bot uses the address when `is_bot` is true: its operator, the bots it serves and what they do (`agents` and `categories`, lists kept in the order served), and whether the operator vouches for it (`verified`, `identity`, `verified_by`); `user_agent`, when a lookup sends the user agent of the request you are deciding on (below); the `company` using the address and its `abuse` contact; and `location` down to the city, postal code and coordinates. The plans differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.vpndetection.io), then pass it in:
+A paid plan answers every field: `is_hosting`, `is_cdn` and the four proxy flags as well, and the provider (its ID and its name), confidence and last-seen detail behind each flag; `is_carrier`, `is_satellite`, `is_ssh`, `is_smtp`, `is_web`, `is_dns_resolver` and `is_bittorrent`, with the detail behind each (`web` is a list, one row per web service seen); `bot`, whose bot uses the address when `is_bot` is true: its operator, the bots it serves and what they do (`agents` and `categories`, lists kept in the order served), and whether the operator vouches for it (`verified`, `identity`, `verified_by`); `user_agent`, when a lookup sends the user agent of the request you are deciding on (below); the `company` using the address and its `abuse` contact; and `location` down to the city, postal code and coordinates. Its quotas differ only in how many lookups they include, and a free account tries every field. Create a key in the [console](https://app.vpndetection.io), then pass it in:
 
 ```zig
 var client = try vpndetection.Client.init(gpa, io, .{ .api_key = key });
@@ -120,8 +120,8 @@ Same answer `lookup` would give for that address, and the same cost against your
 const acct = try client.myEntitlement();
 defer acct.deinit();
 
-std.debug.print("{s}\n", .{acct.value.plan.name});       // Max, what to show
-std.debug.print("{s}\n", .{acct.value.plan.key});        // max, what to compare against
+std.debug.print("{s}\n", .{acct.value.plan.name});       // Data, what to show
+std.debug.print("{s}\n", .{acct.value.plan.key});        // data_4, what to compare against
 std.debug.print("{d}\n", .{acct.value.usage.requests});  // 580
 ```
 
