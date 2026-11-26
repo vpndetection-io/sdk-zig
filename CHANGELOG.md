@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.19.2 - 2026-11-26
+
+### Fixes
+
+- Refuse a user agent on the entitlement call ([`3def0f5`](https://github.com/vpndetection-io/sdk-zig/commit/3def0f59ab41bbba2eae33057a01892c7c28e187))
+
 ## 4.19.1 - 2026-11-25
 
 ### Fixes
