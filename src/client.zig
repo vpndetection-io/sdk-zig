@@ -75,7 +75,8 @@ pub const CallOptions = struct {
     /// The `User-Agent` header of the request you are deciding on, sent as
     /// `user_agent`. With every field, on a paid plan or the trial, the answer
     /// then carries `user_agent`: the agent it names, and whether the address
-    /// bears that out. Read by `lookupWith` and `myIpWith` alone. Empty is
+    /// bears that out. Read by `lookupWith` and `myIpWith`; `myEntitlementWith`
+    /// refuses one with `error.BadRequest` before anything is sent. Empty is
     /// none; a longer one than the API reads (1024 bytes) is still sent, and
     /// the API reads its start. A lookup's answer is cached and shared on the
     /// address and this agent together, apart from the address's plain answer
@@ -387,6 +388,7 @@ pub const Client = struct {
         var scratch: Diagnostics = .{};
         const diag = options.diagnostics orelse &scratch;
         diag.reset();
+        try refuseAgent(options, diag, "myEntitlement");
 
         return http.getParsed(Entitlement, &self.transport, self.gpa, self.io, .{
             .path = "/api/v1/entitlement",
@@ -966,6 +968,17 @@ fn runWorker(work: *Work) void {
 /// which the API reads as none. Set by hand rather than checked against the
 /// spec's 1024: the API reads the start of a longer one and answers.
 /// `slot` holds it, since a slice of a literal here would die with this call.
+/// The entitlement call takes no `user_agent`, as the spec gives it none, so one
+/// is refused with `error.BadRequest` before anything is sent: dropped, it would
+/// leave the caller expecting a verdict the answer never carries. An empty agent
+/// is none, as on a lookup.
+fn refuseAgent(options: CallOptions, diag: *Diagnostics, comptime call: []const u8) error{BadRequest}!void {
+    const agent = options.user_agent orelse return;
+    if (agent.len == 0) return;
+    diag.setMessage(call ++ " takes no user agent");
+    return error.BadRequest;
+}
+
 fn agentQuery(agent: ?[]const u8, slot: *[1]http.Transport.Param) []const http.Transport.Param {
     const given = agent orelse return &.{};
     if (given.len == 0) return &.{};

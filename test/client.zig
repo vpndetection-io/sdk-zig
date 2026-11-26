@@ -1091,6 +1091,24 @@ const lookup_ok =
     \\"pubproxy":{"entry":true,"exit":false,"protocols":["http"],"num_ports":2,"num_proxies":0,"last_seen":"2026-10-20","last_usable":""},
     \\"asn":{"asn":5,"name":"n","domain":"d","type":"t","prefix":"p","country":"US","rpki_status":"valid"}}
 ;
+test "the entitlement call refuses a user agent and sends nothing" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/api/v1/entitlement", .ok(entitlement_ok));
+
+    var client = try harness.client(.{ .api_key = "key", .retries = 0 });
+    defer client.deinit();
+    const agent = "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)";
+    var diagnostics: vpndetection.Diagnostics = .{};
+    try std.testing.expectError(error.BadRequest, client.myEntitlementWith(.{ .user_agent = agent, .diagnostics = &diagnostics }));
+    try std.testing.expectEqualStrings("myEntitlement takes no user agent", diagnostics.message());
+    try std.testing.expectEqual(0, harness.stub.callCount());
+
+    (try client.myEntitlementWith(.{ .user_agent = "" })).deinit();
+    try std.testing.expectEqual(1, harness.stub.callCount());
+}
+
 const entitlement_ok =
     \\{"org_id":"o","apikey":{"id":"k","expires":null,"allowed_cidrs":[]},"plan":{"key":"max","name":"Max","tier":"max"},
     \\"usage":{"requests":1,"quota":10,"hard_limit":null,"window_start":"2026-10-01T00:00:00Z","window_end":"2026-11-01T00:00:00.5+02:00"}}
