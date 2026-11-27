@@ -1150,6 +1150,9 @@ const wrong_answers = [_]Case{
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = ",\"rpki_status\":\"valid\"", .to = "" },
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"country\":\"US\"", .to = "\"country\":null" },
     .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"rpki_status\":\"valid\"", .to = "\"rpki_status\":null" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"type\":\"t\"", .to = "\"type\":null" },
+    .{ .path = "/1.1.1.1", .body = lookup_ok, .from = "\"type\":\"t\"", .to = "\"type\":7" },
+    .{ .path = "/myip", .body = lookup_ok, .from = "\"type\":\"t\"", .to = "\"type\":null" },
     .{ .path = "/myip", .body = lookup_ok, .from = "\"hits\":3", .to = "\"hits\":\"3\"" },
     .{ .path = "/myip", .body = lookup_ok, .from = "\"rpki_status\":\"valid\"", .to = "\"rpki_status\":null" },
     .{ .path = "/myip", .body = lookup_ok, .from = "\"last_seen\":\"2026-10-20\",\"confidence\"", .to = "\"last_seen\":\"x\",\"confidence\"" },
@@ -1292,6 +1295,91 @@ test "a batch entry with a member of the wrong type, a malformed date or a requi
         },
     };
     try std.testing.expect(batch.get("9.9.9.9").? == .ok);
+}
+
+// Spec 2026.11.26: `is_bot` and the AS's `type` are a paid plan's, so a keyless
+// answer carries neither. `type` keeps its string type and reads empty, `is_bot`
+// reads null, and the body it came from still shows the wire left them out.
+const unlimited_answer =
+    \\{"ip":"1.1.1.1","is_bogon":false,"is_vpn":false,"is_relay":false,"is_tor":false,"is_anycast":true,
+    \\"relay":{},"tor":{},"location":{"continent":"OC","continent_name":"Oceania","country":"AU","country_name":"Australia",
+    \\"timezone":"Australia/Sydney","currency_code":"AUD","currency_name":"Australian Dollar","currency_symbol":"$",
+    \\"flag_emoji":"x","flag_unicode":"U+1F1E6"},
+    \\"asn":{"asn":13335,"name":"Cloudflare, Inc.","domain":"cloudflare.com","prefix":"1.1.1.0/24","country":"US","rpki_status":"valid"},
+    \\"hostname":"one.one.one.one"}
+;
+
+fn expectNoPaidMembers(answer: vpndetection.Lookup) !void {
+    try std.testing.expectEqual(@as(?bool, null), answer.value.is_bot);
+    try std.testing.expectEqualStrings("Cloudflare, Inc.", answer.value.asn.?.name);
+    try std.testing.expectEqualStrings("", answer.value.asn.?.type);
+    try std.testing.expect(std.mem.indexOf(u8, answer.raw, "\"type\"") == null);
+    try std.testing.expect(std.mem.indexOf(u8, answer.raw, "is_bot") == null);
+}
+
+test "a keyless answer without is_bot and the AS's type is read, from the wire and from the cache" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/1.1.1.1", .{ .body = unlimited_answer });
+    try harness.stub.route("/myip", .{ .body = unlimited_answer });
+
+    var client = try harness.client(.{});
+    defer client.deinit();
+    const served = try client.lookup("1.1.1.1");
+    defer served.deinit();
+    try expectNoPaidMembers(served);
+
+    const cached = try client.lookup("1.1.1.1");
+    defer cached.deinit();
+    try std.testing.expectEqual(1, harness.stub.callCount());
+    try expectNoPaidMembers(cached);
+
+    const mine = try client.myIp();
+    defer mine.deinit();
+    try expectNoPaidMembers(mine);
+}
+
+test "an answer that carries the AS's type and is_bot reads them as served" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    const body = try std.mem.replaceOwned(
+        u8,
+        harness.stub.arena.allocator(),
+        unlimited_answer,
+        "\"domain\":\"cloudflare.com\",",
+        "\"domain\":\"cloudflare.com\",\"type\":\"hosting\",",
+    );
+    try harness.stub.route("/1.1.1.1", .{ .body = try std.mem.replaceOwned(u8, harness.stub.arena.allocator(), body, "\"is_anycast\":true,", "\"is_bot\":true,\"is_anycast\":true,") });
+
+    var client = try harness.client(.{});
+    defer client.deinit();
+    const served = try client.lookup("1.1.1.1");
+    defer served.deinit();
+    try std.testing.expectEqual(@as(?bool, true), served.value.is_bot);
+    try std.testing.expectEqualStrings("hosting", served.value.asn.?.type);
+}
+
+test "a batch entry without the AS's type is read, and one with a null type fails that address alone" {
+    const gpa = std.testing.allocator;
+    const harness = try Harness.start(gpa);
+    defer harness.deinit();
+    try harness.stub.route("/batch", .{
+        .body = "{\"results\":{\"1.1.1.1\":{\"ip\":\"1.1.1.1\",\"is_vpn\":false,\"asn\":{\"asn\":5,\"name\":\"n\",\"domain\":\"d\",\"prefix\":\"p\",\"country\":\"US\",\"rpki_status\":\"valid\"}}," ++
+            "\"8.8.8.8\":{\"ip\":\"8.8.8.8\",\"is_vpn\":false,\"asn\":{\"asn\":5,\"name\":\"n\",\"domain\":\"d\",\"type\":null,\"prefix\":\"p\",\"country\":\"US\",\"rpki_status\":\"valid\"}}}}",
+        .verbatim = true,
+    });
+    var client = try harness.client(.{ .retries = 2, .api_key = "key" });
+    defer client.deinit();
+    var batch = try client.lookupBatch(&.{ "1.1.1.1", "8.8.8.8" }, .{});
+    defer batch.deinit();
+
+    try std.testing.expectEqualStrings("", batch.get("1.1.1.1").?.ok.value.asn.?.type);
+    switch (batch.get("8.8.8.8").?) {
+        .ok => return error.TestUnexpectedResult,
+        .failed => |failure| try std.testing.expectEqual(error.ServerError, failure.err),
+    }
 }
 
 test "a date-time in any of RFC 3339's spellings is read" {

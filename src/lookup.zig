@@ -34,7 +34,7 @@ pub const Answer = struct {
     is_cdn: ?bool = null,
     /// Whether an automated client uses the address: a search engine's or an AI
     /// company's crawler, an uptime monitor, an internet scanner, a webhook
-    /// sender. Every answer carries it, with or without a key.
+    /// sender. On a paid plan; null on Unlimited.
     is_bot: ?bool = null,
     is_resproxy: ?bool = null,
     is_dcproxy: ?bool = null,
@@ -338,8 +338,8 @@ pub const Location = struct {
 };
 
 /// The autonomous system announcing the address. `asn` is 0 and the rest empty
-/// where no announcement covers it. Every member is present whenever the object
-/// is.
+/// where no announcement covers it. Every member but `type` is present whenever
+/// the object is.
 pub const Asn = struct {
     /// The AS number, or 0.
     asn: i64,
@@ -347,8 +347,10 @@ pub const Asn = struct {
     name: []const u8,
     /// The AS operator's own registrable domain.
     domain: []const u8,
-    /// `isp`, `hosting`, `education`, `government` or `business`.
-    type: []const u8,
+    /// `isp`, `hosting`, `education`, `government` or `business`. On a paid
+    /// plan: an answer on Unlimited leaves it out, and it reads as an empty
+    /// string, which `Lookup.raw` tells from a served one.
+    type: []const u8 = "",
     /// The announced prefix covering the address, the most specific when
     /// several do.
     prefix: []const u8,
@@ -575,4 +577,25 @@ test "a body missing a required member is malformed" {
         error.Malformed,
         parseServed(std.testing.allocator, "{\"ip\":\"1.1.1.1\"}"),
     );
+}
+
+test "an answer without asn.type reads it empty, and a type of the wrong JSON type is still refused" {
+    const gpa = std.testing.allocator;
+    const base = "{\"ip\":\"1.1.1.1\",\"is_vpn\":false,\"asn\":{\"asn\":5,\"name\":\"n\",\"domain\":\"d\",\"prefix\":\"p\",\"country\":\"US\",\"rpki_status\":\"valid\"}}";
+    const without = try parseServed(gpa, base);
+    defer without.deinit();
+    try std.testing.expectEqualStrings("", without.value.asn.?.type);
+    try std.testing.expectEqualStrings("n", without.value.asn.?.name);
+
+    const served = try std.mem.replaceOwned(u8, gpa, base, "\"prefix\"", "\"type\":\"isp\",\"prefix\"");
+    defer gpa.free(served);
+    const with = try parseServed(gpa, served);
+    defer with.deinit();
+    try std.testing.expectEqualStrings("isp", with.value.asn.?.type);
+
+    inline for (.{ "null", "7", "true", "{}" }) |bad| {
+        const body = try std.mem.replaceOwned(u8, gpa, base, "\"prefix\"", "\"type\":" ++ bad ++ ",\"prefix\"");
+        defer gpa.free(body);
+        try std.testing.expectError(error.Malformed, parseServed(gpa, body));
+    }
 }
