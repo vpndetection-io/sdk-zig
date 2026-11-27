@@ -2,6 +2,12 @@
 
 What each release changed for you, newest first. Each line is a commit's summary, linked to its full description and diff. Releases before 4.3.2 are described by their release commits.
 
+## 4.20.0 - 2026-11-27
+
+### Fixes
+
+- Read a keyless answer without the AS's type ([`f3554c9`](https://github.com/vpndetection-io/sdk-zig/commit/f3554c9f1cd83a92e039b7fdff84cf8c0aa6696a))
+
 ## 4.19.2 - 2026-11-26
 
 ### Fixes
