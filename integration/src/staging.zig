@@ -135,9 +135,10 @@ pub fn assertShape(fixture: Fixture) !void {
     inline for (.{ "carrier", "satellite", "ssh", "smtp", "dns_resolver", "bittorrent", "bot" }) |name| {
         try assertEveryKey(name, @field(answer, name), @field(answer, "is_" ++ name));
     }
-    // Every plan answers whether a bot uses the address.
-    try std.testing.expect(fixture.has("is_bot"));
-    try std.testing.expect(answer.is_bot != null);
+    // `is_bot` and the AS's `type` are a paid plan's: an Unlimited answer may
+    // carry them while the API still serves them, or leave them out, and
+    // either way a served one reads as served.
+    try assertPaidMembers(fixture);
     if (answer.web) |rows| {
         // A row is typed whole, so one missing a documented key fails to parse.
         try std.testing.expect(answer.is_web != null);
@@ -154,6 +155,31 @@ pub fn assertShape(fixture: Fixture) !void {
                 }
             }
         }
+    }
+}
+
+/// `is_bot`, and `asn.type` read as an empty string when the wire leaves it
+/// out: a member the answer carries reads as served, and one it leaves out
+/// reads as the library's absent value.
+fn assertPaidMembers(fixture: Fixture) !void {
+    const answer = fixture.lookup.value;
+    const served = fixture.served.value.object;
+    if (served.get("is_bot")) |flag| {
+        if (flag != .bool) return error.TestUnexpectedResult;
+        try std.testing.expectEqual(@as(?bool, flag.bool), answer.is_bot);
+    } else {
+        try std.testing.expectEqual(@as(?bool, null), answer.is_bot);
+    }
+    const asn = answer.asn orelse return;
+    const wire = switch (served.get("asn") orelse return error.TestUnexpectedResult) {
+        .object => |object| object,
+        else => return error.TestUnexpectedResult,
+    };
+    if (wire.get("type")) |kind| {
+        if (kind != .string) return error.TestUnexpectedResult;
+        try std.testing.expectEqualStrings(kind.string, asn.type);
+    } else {
+        try std.testing.expectEqualStrings("", asn.type);
     }
 }
 
