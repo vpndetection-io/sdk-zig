@@ -221,8 +221,8 @@ pub const Cache = struct {
 
     /// How long `body` stays: the time to live, or at most a minute for an answer
     /// marked `trial_expired` or `cap_reached`, which changes as soon as the
-    /// trial is renewed or the cap raised. Still cached, so a busy process past
-    /// its trial does not send every repeat of an address to the API.
+    /// organization's plan changes or its cap is raised. Still cached, so a busy
+    /// process past its trial does not send every repeat of an address to the API.
     fn lifeOf(self: *const Cache, body: []const u8) Io.Duration {
         if (!isReduced(self.gpa, body)) return self.ttl;
         return if (self.ttl.nanoseconds < reduced_ttl.nanoseconds) self.ttl else reduced_ttl;
